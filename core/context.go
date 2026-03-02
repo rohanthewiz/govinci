@@ -20,6 +20,7 @@ type Context struct {
 
 	children       []*Context
 	childrenCursor int
+	scopes         map[string]*Context
 }
 
 func (ctx *Context) MarkDirty() {
@@ -51,6 +52,7 @@ func NewContext() *Context {
 		renderManager:   NewRenderManager(),
 		callbackMap:     make(map[string]any),
 		callbackCounter: &cc,
+		scopes:          make(map[string]*Context),
 	}
 }
 func (ctx *Context) NewChildContext() *Context {
@@ -63,6 +65,7 @@ func (ctx *Context) NewChildContext() *Context {
 		callbackMap:     ctx.callbackMap,
 		callbackCounter: ctx.callbackCounter,
 		parent:          ctx,
+		scopes:          make(map[string]*Context),
 	}
 }
 func UseChildContext(ctx *Context) *Context {
@@ -171,4 +174,24 @@ func WithConfigOpt(c *AppConfig) func(*Context) {
 func (ctx *Context) Reset() {
 	ctx.Cursor = 0
 	ctx.usedCallbacks = make(map[string]bool)
+	for _, child := range ctx.children {
+		child.Reset()
+	}
+	for _, child := range ctx.slots {
+		if c, ok := child.(*Context); ok {
+			c.Reset()
+		}
+	}
+	for _, scope := range ctx.scopes {
+		scope.Reset()
+	}
+}
+
+func (ctx *Context) Scope(key string) *Context {
+	if child, ok := ctx.scopes[key]; ok {
+		return child
+	}
+	child := ctx.NewChildContext()
+	ctx.scopes[key] = child
+	return child
 }

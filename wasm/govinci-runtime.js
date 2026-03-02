@@ -2,7 +2,6 @@
 
 const Govinci = (() => {
     let rootElement = null;
-    const callbackMap = {};
     const DEBUG = true;
 
     function renderNode(node, path = "") {
@@ -35,17 +34,17 @@ const Govinci = (() => {
             for (const [key, value] of Object.entries(node.Props)) {
                 if (key.startsWith("on")) {
                     const event = mapEventName(key);
-                    const existing = el.dataset[`listener_${key}`];
-                    if (existing && callbackMap[existing]) {
-                        el.removeEventListener(event, callbackMap[existing]);
-                    }
-                    const handler = (e) => {
-                        const payload = extractEventPayload(e, node.Type);
-                        window.GoInvokeCallback(value, payload);
-                    };
-                    el.addEventListener(event, handler);
                     el.dataset[`listener_${key}`] = value;
-                    callbackMap[value] = handler;
+                    if (!el.dataset[`has_listener_${key}`]) {
+                        el.dataset[`has_listener_${key}`] = "true";
+                        el.addEventListener(event, (e) => {
+                            const latestCbId = el.dataset[`listener_${key}`];
+                            if (latestCbId) {
+                                const payload = extractEventPayload(e, node.Type);
+                                window.GoInvokeCallback(latestCbId, payload);
+                            }
+                        });
+                    }
                 } else if (key === "value") {
                     el.value = value;
                 } else if (key === "placeholder") {
@@ -152,23 +151,17 @@ const Govinci = (() => {
                             el.placeholder = v;
                         } else if (k.startsWith("on")) {
                             const event = mapEventName(k);
-                            const oldListenerId = el.dataset[`listener_${k}`];
-
-
-                            if (oldListenerId && callbackMap[oldListenerId]) {
-                                el.removeEventListener(event, callbackMap[oldListenerId]);
-                                delete callbackMap[oldListenerId];
-                            }
-
-                            const handler = (e) => {
-                                const payload = extractEventPayload(e, el.tagName.toLowerCase());
-                                window.GoInvokeCallback(v, payload);
-                            };
-
-
-                            el.addEventListener(event, handler);
                             el.dataset[`listener_${k}`] = v;
-                            callbackMap[v] = handler;
+                            if (!el.dataset[`has_listener_${k}`]) {
+                                el.dataset[`has_listener_${k}`] = "true";
+                                el.addEventListener(event, (e) => {
+                                    const latestCbId = el.dataset[`listener_${k}`];
+                                    if (latestCbId) {
+                                        const payload = extractEventPayload(e, el.tagName.toLowerCase());
+                                        window.GoInvokeCallback(latestCbId, payload);
+                                    }
+                                });
+                            }
                         }
                     }
                     break;
