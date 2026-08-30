@@ -1,0 +1,218 @@
+import SwiftUI
+
+/// Swift mirror of Go's core.Style, decoded from the tree/patch JSON.
+///
+/// Field names in the JSON are the Go struct's exported names verbatim
+/// ("FontSize", "TextColor", ...) because core.Style carries no json tags.
+/// Only the subset the Go DSL can actually produce today is mapped; the
+/// web-oriented fields (Position, ZIndex, Transition, Animation, pseudo
+/// states) have no SwiftUI analog at this layer and are intentionally
+/// ignored rather than half-implemented.
+///
+/// This is a value type swapped wholesale by `update-style` patches — the
+/// exact analog of the Kotlin data class held in a `mutableStateOf`.
+struct GovinciStyle: Equatable {
+    struct Edges: Equatable {
+        var top = 0, right = 0, bottom = 0, left = 0
+        static let zero = Edges()
+        var insets: EdgeInsets {
+            EdgeInsets(top: CGFloat(top), leading: CGFloat(left),
+                       bottom: CGFloat(bottom), trailing: CGFloat(right))
+        }
+    }
+
+    var fontSize: CGFloat = 0
+    var fontWeight: Int = 0
+    var textColor: Color?
+    var background: Color?
+    var padding: Edges = .zero
+    var margin: Edges = .zero
+    var borderRadius: CGFloat = 0
+    var shadow: CGFloat = 0
+    var align: String = ""
+    var display: String = ""
+    var width: String = ""
+    var height: String = ""
+    var borderColor: Color?
+    var borderWidth: CGFloat = 0
+    var gap: CGFloat = 0
+    var justifyContent: String = ""
+    var alignItems: String = ""
+    var flexGrow: CGFloat = 0
+    var lineHeight: Int = 0
+
+    static func parse(_ obj: [String: Any]?) -> GovinciStyle? {
+        guard let obj else { return nil }
+        func num(_ key: String) -> CGFloat { CGFloat((obj[key] as? NSNumber)?.doubleValue ?? 0) }
+        func int(_ key: String) -> Int { (obj[key] as? NSNumber)?.intValue ?? 0 }
+        func str(_ key: String) -> String { obj[key] as? String ?? "" }
+
+        var s = GovinciStyle()
+        s.fontSize = num("FontSize")
+        s.fontWeight = int("FontWeight")
+        s.textColor = parseColor(str("TextColor"))
+        s.background = parseColor(str("Background"))
+        s.padding = parseEdges(obj["Padding"] as? [String: Any])
+        s.margin = parseEdges(obj["Margin"] as? [String: Any])
+        s.borderRadius = num("BorderRadius")
+        s.shadow = num("Shadow")
+        s.align = str("Align")
+        s.display = str("Display")
+        s.width = str("Width")
+        s.height = str("Height")
+        s.borderColor = parseColor(str("BorderColor"))
+        s.borderWidth = num("BorderWidth")
+        s.gap = num("Gap")
+        s.justifyContent = str("JustifyContent")
+        s.alignItems = str("AlignItems")
+        s.flexGrow = num("FlexGrow")
+        s.lineHeight = int("LineHeight")
+        return s
+    }
+
+    /// Go's EdgeInsets carries per-side values plus Horizontal/Vertical
+    /// shorthands; the shorthand fills any side not set explicitly, which
+    /// matches how the DSL's PaddingHorizontal-style helpers are used.
+    private static func parseEdges(_ obj: [String: Any]?) -> Edges {
+        guard let obj else { return .zero }
+        func int(_ key: String) -> Int { (obj[key] as? NSNumber)?.intValue ?? 0 }
+        let h = int("Horizontal"), v = int("Vertical")
+        func side(_ name: String, _ shorthand: Int) -> Int {
+            let explicit = int(name)
+            return explicit != 0 ? explicit : shorthand
+        }
+        return Edges(top: side("Top", v), right: side("Right", h),
+                     bottom: side("Bottom", v), left: side("Left", h))
+    }
+
+    /// Accepts CSS-style #RGB, #RRGGBB, and #RRGGBBAA (Go emits the latter two).
+    static func parseColor(_ hex: String?) -> Color? {
+        guard let hex, hex.hasPrefix("#") else { return nil }
+        let s = String(hex.dropFirst())
+        guard let v = UInt64(s, radix: 16) else { return nil }
+        let r, g, b, a: Double
+        switch s.count {
+        case 3:
+            r = Double((v >> 8) & 0xF) * 17
+            g = Double((v >> 4) & 0xF) * 17
+            b = Double(v & 0xF) * 17
+            a = 255
+        case 6:
+            r = Double((v >> 16) & 0xFF)
+            g = Double((v >> 8) & 0xFF)
+            b = Double(v & 0xFF)
+            a = 255
+        case 8: // CSS byte order: RRGGBBAA — alpha last
+            r = Double((v >> 24) & 0xFF)
+            g = Double((v >> 16) & 0xFF)
+            b = Double((v >> 8) & 0xFF)
+            a = Double(v & 0xFF)
+        default:
+            return nil
+        }
+        return Color(.sRGB, red: r / 255, green: g / 255, blue: b / 255, opacity: a / 255)
+    }
+}
+
+/// Main-axis growth the parent computed for a child from its FlexGrow.
+///
+/// SwiftUI has no Compose-style weight; an infinity frame along the stack's
+/// main axis makes the child absorb leftover space, which matches FlexGrow
+/// for the common single-grower case. Multiple growers split leftover space
+/// equally regardless of their weights — proportional weights need a custom
+/// Layout and are future work.
+enum GovinciGrow {
+    case none, horizontal, vertical
+}
+
+extension View {
+    /// Applies this node's box styling in CSS box-model order. CSS lists the
+    /// layers outermost-first (margin → size → shadow → clip → background →
+    /// border → padding) while SwiftUI modifier chains read innermost-first,
+    /// so the chain below is that list reversed — and the order is
+    /// load-bearing: background before clipShape would leave square corners
+    /// painted, padding after background would paint outside the box, etc.
+    func govinciBox(_ s: GovinciStyle?, grow: GovinciGrow = .none) -> some View {
+        let shape = RoundedCornerShapeIfAny(radius: s?.borderRadius ?? 0)
+        return self
+            .padding((s?.padding ?? .zero).insets)
+            .background(s?.background ?? .clear)
+            .govinciClip(shape)
+            .govinciBorder(shape, color: s?.borderColor, width: s?.borderWidth ?? 0)
+            .govinciShadow(s?.shadow ?? 0)
+            .govinciDimension(s?.width ?? "", axis: .horizontal)
+            .govinciDimension(s?.height ?? "", axis: .vertical)
+            .padding((s?.margin ?? .zero).insets)
+            .govinciGrow(grow)
+            // "hidden" keeps the node's space but not its pixels ("none" is
+            // handled earlier by not rendering the node at all — see RenderNode).
+            .opacity(s?.display == "hidden" ? 0 : 1)
+    }
+
+    @ViewBuilder fileprivate func govinciClip(_ shape: RoundedRectangle?) -> some View {
+        // Clipping is strictly conditional: a radius-0 clipShape would still
+        // cut off child overflow (e.g. shadows), which un-clipped boxes allow.
+        if let shape { clipShape(shape) } else { self }
+    }
+
+    @ViewBuilder fileprivate func govinciBorder(_ shape: RoundedRectangle?, color: Color?, width: CGFloat) -> some View {
+        if let color, width > 0 {
+            // strokeBorder insets the stroke fully inside the shape — the
+            // Compose Modifier.border behavior — where a plain stroke would
+            // straddle the edge and get half clipped away.
+            overlay((shape ?? RoundedRectangle(cornerRadius: 0)).strokeBorder(color, lineWidth: width))
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder fileprivate func govinciShadow(_ radius: CGFloat) -> some View {
+        if radius > 0 {
+            // compositingGroup flattens the subtree first so the shadow wraps
+            // the box as a whole; without it SwiftUI shadows every opaque
+            // pixel individually (each text glyph gets its own halo).
+            compositingGroup().shadow(radius: radius / 2, y: radius / 3)
+        } else {
+            self
+        }
+    }
+
+    /// Maps a Go dimension string onto a frame. Supported forms: "120px" or a
+    /// bare number (points), "100%" (fill the parent), other percentages
+    /// (fraction of the nearest container — an approximation of
+    /// fraction-of-parent, which SwiftUI cannot express without a
+    /// GeometryReader), and ""/"auto" (intrinsic size, no frame).
+    @ViewBuilder fileprivate func govinciDimension(_ value: String, axis: Axis) -> some View {
+        if value.isEmpty || value == "auto" {
+            self
+        } else if value == "100%" {
+            switch axis {
+            case .horizontal: frame(maxWidth: .infinity)
+            case .vertical: frame(maxHeight: .infinity)
+            }
+        } else if value.hasSuffix("%"), let pct = Double(value.dropLast()) {
+            containerRelativeFrame(axis == .horizontal ? .horizontal : .vertical) { length, _ in
+                length * min(max(pct / 100, 0), 1)
+            }
+        } else if let number = Double(value.hasSuffix("px") ? String(value.dropLast(2)) : value) {
+            switch axis {
+            case .horizontal: frame(width: CGFloat(number))
+            case .vertical: frame(height: CGFloat(number))
+            }
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder func govinciGrow(_ grow: GovinciGrow) -> some View {
+        switch grow {
+        case .none: self
+        case .horizontal: frame(maxWidth: .infinity)
+        case .vertical: frame(maxHeight: .infinity)
+        }
+    }
+}
+
+private func RoundedCornerShapeIfAny(radius: CGFloat) -> RoundedRectangle? {
+    radius > 0 ? RoundedRectangle(cornerRadius: radius) : nil
+}

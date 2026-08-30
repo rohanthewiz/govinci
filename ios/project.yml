@@ -1,0 +1,30 @@
+# xcodegen spec — generates GovinciApp.xcodeproj (which stays untracked; this
+# file is the source of truth). Regenerate after changing it:
+#   brew install xcodegen   # once
+#   cd ios && xcodegen generate
+name: GovinciApp
+options:
+  bundleIdPrefix: com.govinci
+  deploymentTarget:
+    iOS: "17.0" # floor set by the runtime's use of @Observable + containerRelativeFrame
+settings:
+  SWIFT_VERSION: "5.9"
+targets:
+  GovinciApp:
+    type: application
+    platform: iOS
+    sources:
+      - Govinci
+    dependencies:
+      # gomobile emits a static xcframework, so it links in; nothing to embed.
+      - framework: Frameworks/Govinci.xcframework
+        embed: false
+    info:
+      path: Govinci/Info.plist
+      properties:
+        UILaunchScreen: {} # system default launch screen; without it iOS letterboxes the app
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.govinci.demo
+      # gomobile's generated glue is Objective-C; the app is Swift-only, but
+      # linking Go's runtime archive wants the ObjC linker flag.
+      OTHER_LDFLAGS: -ObjC
