@@ -28,3 +28,25 @@ targets:
       # gomobile's generated glue is Objective-C; the app is Swift-only, but
       # linking Go's runtime archive wants the ObjC linker flag.
       OTHER_LDFLAGS: -ObjC
+  # Simulator smoke test: drives the demo app through all four event kinds
+  # plus the push channel (see GovinciUITests.swift). Run with:
+  #   xcodebuild test -project GovinciApp.xcodeproj -scheme GovinciApp \
+  #     -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+  GovinciUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - GovinciUITests
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: GovinciApp
+schemes:
+  GovinciApp:
+    build:
+      targets:
+        GovinciApp: all
+        GovinciUITests: [test]
+    test:
+      targets:
+        - GovinciUITests

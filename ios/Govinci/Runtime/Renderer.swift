@@ -33,8 +33,13 @@ struct GovinciRoot: View {
 
     var body: some View {
         if let root = runtime.store.root {
+            // Pin the tree to the window's top-leading corner: SwiftUI centers
+            // a smaller-than-window view by default, but Govinci's layout
+            // model (like the Android renderer's root Column) flows content
+            // from the top and lets the tree decide its own extent.
             RenderNode(node: root)
                 .environment(\.govinciRuntime, runtime)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }
