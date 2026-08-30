@@ -166,6 +166,12 @@ func styleAttr(s *core.Style) string {
 	if s.BorderRadius != 0 {
 		styles = append(styles, fmt.Sprintf("border-radius:%gpx", s.BorderRadius))
 	}
+	if s.Transition != "" {
+		// core.Transition's canonical "<ms>ms <easing>" is valid CSS as-is;
+		// "all" scopes it to every animatable property, matching the native
+		// renderers' behavior.
+		styles = append(styles, fmt.Sprintf("transition:all %s", s.Transition))
+	}
 	if len(styles) == 0 {
 		return ""
 	}

@@ -73,6 +73,10 @@ const Govinci = (() => {
         if (style.Padding) out.padding = edgeToCSS(style.Padding);
         if (style.Margin) out.margin = edgeToCSS(style.Margin);
         if (style.BorderRadius) out.borderRadius = `${style.BorderRadius}px`;
+        // core.Transition's canonical "<ms>ms <easing>" is valid CSS as-is;
+        // the browser drives the frames, same declare-in-Go model as the
+        // native renderers.
+        if (style.Transition) out.transition = `all ${style.Transition}`;
         return out;
     }
 

@@ -228,12 +228,20 @@ private struct GovinciList: View {
 
     var body: some View {
         let s = node.style
+        let rows = flattenFragments(node.children)
         ScrollView {
             LazyVStack(alignment: crossAlignmentH(s), spacing: CGFloat(s?.gap ?? 0)) {
-                ForEach(flattenFragments(node.children), id: \.viewID) { row in
+                ForEach(rows, id: \.viewID) { row in
                     RenderNode(node: row)
                 }
             }
+            // A Transition declared on the List itself animates row
+            // *placement*: keyed rows slide/fade on reorder, insertion, and
+            // removal instead of teleporting — the Android renderer's
+            // animateItemPlacement analog. Scoped by the row-identity array
+            // so only structural changes trigger it; a row's own property
+            // changes animate under its own Transition via govinciBox.
+            .animation(s?.swiftUIAnimation, value: rows.map(\.viewID))
         }
         .govinciBox(s, grow: grow,
                     onTap: node.stringProp("onClick"),

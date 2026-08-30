@@ -5,9 +5,10 @@ import SwiftUI
 /// Field names in the JSON are the Go struct's exported names verbatim
 /// ("FontSize", "TextColor", ...) because core.Style carries no json tags.
 /// Only the subset the Go DSL can actually produce today is mapped; the
-/// web-oriented fields (Position, ZIndex, Transition, Animation, pseudo
-/// states) have no SwiftUI analog at this layer and are intentionally
-/// ignored rather than half-implemented.
+/// web-oriented fields (Position, ZIndex, Animation, pseudo states) have no
+/// SwiftUI analog at this layer and are intentionally ignored rather than
+/// half-implemented. Transition IS mapped: Go declares it, SwiftUI drives
+/// the frames (see swiftUIAnimation and govinciTransition below).
 ///
 /// This is a value type swapped wholesale by `update-style` patches — the
 /// exact analog of the Kotlin data class held in a `mutableStateOf`.
@@ -43,6 +44,36 @@ struct GovinciStyle: Equatable {
     var accessibilityLabel: String = ""
     var accessibilityHint: String = ""
     var accessibilityHidden: Bool = false
+    var transition: String = ""
+
+    /// The Go Transition declaration as a SwiftUI Animation, or nil when the
+    /// node doesn't animate. Canonical Go form is "<ms>ms <easing>"
+    /// (core.Transition); the CSS longhand ("all 0.3s ease") is tolerated —
+    /// unknown tokens are skipped. The easing keywords map onto the CSS
+    /// spec's cubic-bezier control points so one Go declaration animates
+    /// with the same curve on every platform.
+    var swiftUIAnimation: Animation? {
+        var durationMs = 0
+        var easing = "ease"
+        for token in transition.split(separator: " ") {
+            if token.hasSuffix("ms"), let v = Int(token.dropLast(2)) {
+                durationMs = v
+            } else if token.hasSuffix("s"), let v = Double(token.dropLast(1)) {
+                durationMs = Int(v * 1000)
+            } else if ["linear", "ease", "ease-in", "ease-out", "ease-in-out"].contains(String(token)) {
+                easing = String(token)
+            }
+        }
+        guard durationMs > 0 else { return nil }
+        let d = Double(durationMs) / 1000
+        switch easing {
+        case "linear": return .linear(duration: d)
+        case "ease-in": return .timingCurve(0.42, 0, 1, 1, duration: d)
+        case "ease-out": return .timingCurve(0, 0, 0.58, 1, duration: d)
+        case "ease-in-out": return .timingCurve(0.42, 0, 0.58, 1, duration: d)
+        default: return .timingCurve(0.25, 0.1, 0.25, 1, duration: d) // "ease"
+        }
+    }
 
     static func parse(_ obj: [String: Any]?) -> GovinciStyle? {
         guard let obj else { return nil }
@@ -73,6 +104,7 @@ struct GovinciStyle: Equatable {
         s.accessibilityLabel = str("AccessibilityLabel")
         s.accessibilityHint = str("AccessibilityHint")
         s.accessibilityHidden = obj["AccessibilityHidden"] as? Bool ?? false
+        s.transition = str("Transition")
         return s
     }
 
@@ -226,6 +258,26 @@ extension View {
             // handled earlier by not rendering the node at all — see RenderNode).
             .opacity(s?.display == "hidden" ? 0 : 1)
             .govinciAccessibility(s)
+            .govinciTransition(s)
+    }
+
+    /// The property-change half of Transition support: when the style
+    /// declares one, any style change on this node (an update-style patch —
+    /// background, text color, padding, opacity, explicit size) animates
+    /// with the declared curve instead of snapping. Outermost in the chain
+    /// so every animatable modifier below it is covered; scoped by
+    /// `value: s` so unrelated tree changes never trigger it. A `replace`
+    /// patch swaps the node instance, so replaced nodes snap — matching the
+    /// Go reconciler's intent (replace = a different thing, not a changed
+    /// one).
+    ///
+    /// Deliberately NOT a @ViewBuilder conditional: `.animation(nil, ...)`
+    /// is already the no-animation case, and one more _ConditionalContent
+    /// layer on top of govinciBox's opaque-type tower crashes the Swift
+    /// compiler ("non-terminating conformance substitution" in
+    /// substOpaqueTypesWithUnderlyingTypes).
+    fileprivate func govinciTransition(_ s: GovinciStyle?) -> some View {
+        animation(s?.swiftUIAnimation, value: s)
     }
 
     /// Accessibility semantics from the Go style. Hidden wins and prunes the

@@ -1,5 +1,10 @@
 package com.govinci.runtime
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Easing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -25,9 +30,10 @@ import org.json.JSONObject
  * Field names in the JSON are the Go struct's exported names verbatim
  * ("FontSize", "TextColor", ...) because core.Style carries no json tags.
  * Only the subset the Go DSL can actually produce today is mapped; the
- * web-oriented fields (Position, ZIndex, Transition, Animation, pseudo
- * states) have no Compose analog at this layer and are intentionally
- * ignored rather than half-implemented.
+ * web-oriented fields (Position, ZIndex, Animation, pseudo states) have no
+ * Compose analog at this layer and are intentionally ignored rather than
+ * half-implemented. Transition IS mapped: Go declares it, Compose drives
+ * the frames (see transitionMs/transitionEasing and boxModifier below).
  */
 data class GovinciStyle(
     val fontSize: Float,
@@ -52,8 +58,14 @@ data class GovinciStyle(
     val accessibilityLabel: String,
     val accessibilityHint: String,
     val accessibilityHidden: Boolean,
+    /** Parsed Transition duration; 0 means "no transition, snap changes". */
+    val transitionMs: Int,
+    val transitionEasing: Easing,
 ) {
     data class Edges(val top: Int, val right: Int, val bottom: Int, val left: Int)
+
+    /** This node's property-change animation spec (callers gate on transitionMs > 0). */
+    fun <T> transitionTween() = tween<T>(transitionMs, easing = transitionEasing)
 
     companion object {
         fun parse(obj: JSONObject?): GovinciStyle? {
@@ -81,8 +93,46 @@ data class GovinciStyle(
                 accessibilityLabel = obj.optString("AccessibilityLabel"),
                 accessibilityHint = obj.optString("AccessibilityHint"),
                 accessibilityHidden = obj.optBoolean("AccessibilityHidden", false),
+                transitionMs = parseTransitionMs(obj.optString("Transition")),
+                transitionEasing = parseTransitionEasing(obj.optString("Transition")),
             )
         }
+
+        /**
+         * Transition parsing. The canonical Go form is "<ms>ms <easing>"
+         * (core.Transition); the CSS longhand ("all 0.3s ease") is tolerated
+         * for hand-written styles — the property token is simply skipped.
+         */
+        private fun parseTransitionMs(value: String): Int {
+            for (token in value.split(' ')) {
+                if (token.endsWith("ms")) {
+                    return token.dropLast(2).toIntOrNull() ?: 0
+                }
+                if (token.endsWith("s")) {
+                    val seconds = token.dropLast(1).toFloatOrNull() ?: continue
+                    return (seconds * 1000).toInt()
+                }
+            }
+            return 0
+        }
+
+        /**
+         * CSS easing keyword → Compose curve, using the cubic-bezier control
+         * points the CSS spec defines for each keyword, so Go's declaration
+         * animates with the same curve on every platform. Default is "ease",
+         * matching core.Transition's default.
+         */
+        private fun parseTransitionEasing(value: String): Easing =
+            when (value.split(' ').lastOrNull { it in easingNames }) {
+                "linear" -> LinearEasing
+                "ease-in" -> CubicBezierEasing(0.42f, 0f, 1f, 1f)
+                "ease-out" -> CubicBezierEasing(0f, 0f, 0.58f, 1f)
+                "ease-in-out" -> CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
+                else -> CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f) // "ease"
+            }
+
+        private val easingNames =
+            setOf("linear", "ease", "ease-in", "ease-out", "ease-in-out")
 
         /**
          * Go's EdgeInsets carries per-side values plus Horizontal/Vertical
@@ -177,6 +227,13 @@ fun GovinciStyle?.boxModifier(extra: Modifier = Modifier, gestures: Modifier = M
             start = margin.left.dp, top = margin.top.dp,
             end = margin.right.dp, bottom = margin.bottom.dp,
         )
+    }
+    // Size/layout changes animate when the node declares a Transition.
+    // Placed before the dimension modifiers so explicit width/height changes
+    // (and content-driven ones from padding or children) all animate; color
+    // animation is composition state, handled in Renderer.kt's animatedStyle.
+    if (transitionMs > 0) {
+        m = m.animateContentSize(transitionTween())
     }
     m = m.then(dimensionModifier(width, horizontal = true))
     m = m.then(dimensionModifier(height, horizontal = false))

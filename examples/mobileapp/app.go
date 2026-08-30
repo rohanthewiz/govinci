@@ -119,6 +119,10 @@ func feedTab() core.View {
 					label := fmt.Sprintf("Article %d", n)
 					parts := []core.PropsAndChildren{
 						core.Padding(12),
+						// Selection restyles the row; Transition makes the
+						// highlight fade in natively (Compose/SwiftUI drive
+						// the frames — no patches during the animation).
+						core.Transition(250, core.EaseInOut),
 						core.OnClick(func() { selected.Set(n) }),
 						core.OnLongPress(func() { starred.Set(n) }),
 					}

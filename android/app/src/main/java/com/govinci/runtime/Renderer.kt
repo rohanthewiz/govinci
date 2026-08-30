@@ -1,5 +1,6 @@
 package com.govinci.runtime
 
+import androidx.compose.animation.Animatable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -32,6 +33,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -94,7 +96,7 @@ fun RenderNode(node: GovinciNode, extra: Modifier = Modifier) {
         "Row" -> GovinciRow(node, extra)
         "Column", "Card" -> GovinciColumn(node, extra) // Card = Column whose Go theme style carries the card look
         "List" -> GovinciList(node, extra)
-        "Box" -> Box(style.boxModifier(extra, gestureModifier(node))) { RenderChildren(node) }
+        "Box" -> Box(animatedStyle(style).boxModifier(extra, gestureModifier(node))) { RenderChildren(node) }
         "Spacer" -> Spacer(Modifier.size(node.intProp("size").dp))
         "Scroll" -> Column(
             style.boxModifier(extra).verticalScroll(rememberScrollState())
@@ -139,6 +141,45 @@ private fun RenderChildren(node: GovinciNode) {
 }
 
 /**
+ * The color half of Transition support: when the style declares a
+ * Transition, the background is replaced by a value animated toward the
+ * current target, so an update-style patch fades the color instead of
+ * snapping it. A highlight *appearing* on a previously unpainted node (the
+ * feed row selection pattern) fades in as pure alpha rather than popping —
+ * see the hue-snap note inside.
+ *
+ * This lives at the composition layer (not boxModifier) because the animated
+ * value is remembered state tied to the node's composition position — the
+ * size half of Transition (animateContentSize) is a plain modifier and lives
+ * in boxModifier. A `replace` patch swaps the node instance and therefore
+ * the composition position, so replaced nodes snap — which matches the Go
+ * reconciler's intent (replace = a different thing, not a changed one).
+ */
+@Composable
+private fun animatedStyle(s: GovinciStyle?): GovinciStyle? {
+    if (s == null || s.transitionMs <= 0) return s
+
+    // Driven by hand (Animatable rather than animateColorAsState) because a
+    // null background must fade as pure alpha, never through gray:
+    // Color.Transparent is transparent BLACK, and interpolating straight at
+    // it darkens the highlight before it disappears — measured on-device as
+    // (169,171,175) mid-fade between white and #E8F0FE. So an appearing
+    // color first snaps invisibly to "target at alpha 0" (fixing the hue),
+    // and a disappearing one animates to "current hue at alpha 0".
+    val bg = remember { Animatable(s.background ?: Color.Transparent) }
+    LaunchedEffect(s.background, s.transitionMs) {
+        val target = s.background
+        if (target != null) {
+            if (bg.value.alpha == 0f) bg.snapTo(target.copy(alpha = 0f))
+            bg.animateTo(target, s.transitionTween())
+        } else if (bg.value.alpha > 0f) {
+            bg.animateTo(bg.value.copy(alpha = 0f), s.transitionTween())
+        }
+    }
+    return s.copy(background = bg.value)
+}
+
+/**
  * Tap/long-press wiring for nodes that don't draw their own control (Button
  * and the inputs handle their own interaction). Empty when the node carries
  * neither callback, so plain content pays nothing. combinedClickable also
@@ -166,7 +207,7 @@ private fun gestureModifier(node: GovinciNode): Modifier {
 
 @Composable
 private fun GovinciText(node: GovinciNode, extra: Modifier) {
-    val s = node.style
+    val s = animatedStyle(node.style)
     Text(
         text = node.stringProp("content"),
         modifier = s.boxModifier(extra, gestureModifier(node)),
@@ -317,7 +358,7 @@ private fun GovinciTextField(
 
 @Composable
 private fun GovinciRow(node: GovinciNode, extra: Modifier) {
-    val s = node.style
+    val s = animatedStyle(node.style)
     Row(
         modifier = s.boxModifier(extra, gestureModifier(node)),
         horizontalArrangement = horizontalArrangement(s),
@@ -331,7 +372,7 @@ private fun GovinciRow(node: GovinciNode, extra: Modifier) {
 
 @Composable
 private fun GovinciColumn(node: GovinciNode, extra: Modifier) {
-    val s = node.style
+    val s = animatedStyle(node.style)
     Column(
         modifier = s.boxModifier(extra, gestureModifier(node)),
         verticalArrangement = verticalArrangement(s),
@@ -381,9 +422,10 @@ private fun ColumnScope.ColumnChildren(node: GovinciNode) {
  * an unkeyed row falls back to positional identity, which behaves like
  * Column but loses row state on reorder — same contract as key() above.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GovinciList(node: GovinciNode, extra: Modifier) {
-    val s = node.style
+    val s = animatedStyle(node.style)
     // Reading node.children in composition subscribes this scope to the
     // SnapshotStateList, so structural patches recompose the list.
     val rows = flattenFragments(node.children)
@@ -400,7 +442,20 @@ private fun GovinciList(node: GovinciNode, extra: Modifier) {
             rows,
             key = { i, row -> row.key.ifEmpty { i } },
             contentType = { _, row -> row.type },
-        ) { _, row -> RenderNode(row) }
+        ) { _, row ->
+            // A Transition declared on the List itself animates row
+            // *placement*: keyed rows slide to their new positions on
+            // reorder/insert/removal instead of teleporting. (A Transition
+            // on a row animates that row's own property changes — two
+            // declarations, two scopes.) Built here because
+            // animateItemPlacement only exists inside LazyItemScope.
+            val placement = if ((s?.transitionMs ?: 0) > 0) {
+                Modifier.animateItemPlacement(s!!.transitionTween())
+            } else {
+                Modifier
+            }
+            RenderNode(row, placement)
+        }
     }
 }
 
