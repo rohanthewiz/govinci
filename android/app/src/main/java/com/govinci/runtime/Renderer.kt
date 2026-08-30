@@ -292,6 +292,16 @@ private fun GovinciCheckbox(node: GovinciNode, extra: Modifier) {
  * late echoes never snap the cursor back), and Go-owned when not focused
  * (an async upstream change — validation rewrites, state restores — lands
  * the moment the user isn't mid-typing).
+ *
+ * The one upstream change that must land mid-focus is a deliberate rewrite —
+ * Go clearing the draft after a submit, a validator normalizing the text.
+ * Echoes and rewrites are told apart by bookkeeping, not heuristics: every
+ * value this field sends upstream is queued, and an upstream change that
+ * matches a queued entry is an echo of our own edit (drop the queue through
+ * that point — Go may coalesce renders, skipping intermediate values), while
+ * one that matches nothing we sent can only be Go speaking for itself, so it
+ * wins even while focused. Moving the cursor then is correct: the text under
+ * it was replaced.
  */
 @Composable
 private fun GovinciTextField(
@@ -309,7 +319,26 @@ private fun GovinciTextField(
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusedAsState()
     var text by remember { mutableStateOf(upstream) }
-    if (!focused && text != upstream) text = upstream
+    val pendingEchoes = remember { mutableListOf<String>() }
+    var lastUpstream by remember { mutableStateOf(upstream) }
+
+    if (upstream != lastUpstream) {
+        lastUpstream = upstream
+        if (focused) {
+            val echo = pendingEchoes.indexOf(upstream)
+            if (echo >= 0) {
+                repeat(echo + 1) { pendingEchoes.removeAt(0) }
+            } else {
+                text = upstream
+                pendingEchoes.clear()
+            }
+        }
+    }
+    if (!focused) {
+        // Go-owned while blurred; any queued echoes died with the focus session.
+        pendingEchoes.clear()
+        if (text != upstream) text = upstream
+    }
 
     val rows = node.intProp("rows")
     var modifier = s.boxModifier(extra)
@@ -323,7 +352,10 @@ private fun GovinciTextField(
         value = text,
         onValueChange = {
             text = it
-            if (onChange.isNotEmpty()) runtime.textChanged(onChange, it)
+            if (onChange.isNotEmpty()) {
+                pendingEchoes.add(it)
+                runtime.textChanged(onChange, it)
+            }
         },
         modifier = modifier,
         interactionSource = interactions,

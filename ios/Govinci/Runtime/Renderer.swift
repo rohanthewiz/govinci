@@ -430,6 +430,16 @@ private struct GovinciCheckbox: View {
 /// but late echoes never snap the cursor back), and Go-owned when not focused
 /// (an async upstream change — validation rewrites, state restores — lands
 /// the moment the user isn't mid-typing).
+///
+/// The one upstream change that must land mid-focus is a deliberate rewrite —
+/// Go clearing the draft after a submit, a validator normalizing the text.
+/// Echoes and rewrites are told apart by bookkeeping, not heuristics: every
+/// value this field sends upstream is queued, and an upstream change that
+/// matches a queued entry is an echo of our own edit (drop the queue through
+/// that point — Go may coalesce renders, skipping intermediate values), while
+/// one that matches nothing we sent can only be Go speaking for itself, so it
+/// wins even while focused. Moving the cursor then is correct: the text under
+/// it was replaced.
 private struct GovinciTextField: View {
     let node: GovinciNode
     let grow: GovinciGrow
@@ -440,6 +450,7 @@ private struct GovinciTextField: View {
     @Environment(\.govinciRuntime) private var runtime
     @FocusState private var focused: Bool
     @State private var text = ""
+    @State private var pendingEchoes: [String] = []
 
     var body: some View {
         let upstream = node.stringProp("value")
@@ -453,14 +464,29 @@ private struct GovinciTextField: View {
             get: { focused ? text : upstream },
             set: { v in
                 text = v
-                if !onChange.isEmpty { runtime?.textChanged(onChange, v) }
+                if !onChange.isEmpty {
+                    pendingEchoes.append(v)
+                    runtime?.textChanged(onChange, v)
+                }
             }
         )
 
         field(value: value, prompt: prompt)
             .focused($focused)
             .onChange(of: focused) { _, isFocused in
-                if isFocused { text = node.stringProp("value") }
+                if isFocused {
+                    text = node.stringProp("value")
+                    pendingEchoes.removeAll()
+                }
+            }
+            .onChange(of: upstream) { _, newValue in
+                guard focused else { return }
+                if let echo = pendingEchoes.firstIndex(of: newValue) {
+                    pendingEchoes.removeSubrange(...echo)
+                } else {
+                    text = newValue
+                    pendingEchoes.removeAll()
+                }
             }
             .textFieldStyle(.plain)
             .govinciTextStyle(node.style)
