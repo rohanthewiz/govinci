@@ -56,7 +56,7 @@ const (
 	colorDim       = "#3C3C4399" // secondary text (iOS systemGray-ish)
 	colorAccent    = "#E8F0FE"   // selected filter chip background
 	colorAccentInk = "#0B57D0"   // selected filter chip label — readable on colorAccent
-	colorDanger    = "#B3261E"   // per-row delete affordance
+	colorDanger    = "#B3261E"   // destructive-action background (delete, clear)
 	colorHair      = "#E5E5EA"   // hairline divider
 )
 
@@ -225,9 +225,13 @@ func App(ctx *core.Context) core.View {
 					TextColor: colorDim,
 				}), core.FlexGrow(1)),
 				core.If(doneCount > 0,
+					// Same destructive treatment as the per-row delete: the
+					// red glyph color was invisible against the Button base's
+					// blue background.
 					core.Button("Clear completed", clearDone, core.UseStyle(core.Style{
-						FontSize:  13,
-						TextColor: colorDanger,
+						FontSize:   13,
+						TextColor:  "#FFFFFF",
+						Background: colorDanger,
 					})),
 				),
 			),
@@ -291,9 +295,13 @@ func todoRow(t Todo, setDone func(int, bool), remove func(int)) core.View {
 			FontSize:  16,
 			TextColor: titleColor,
 		}), core.FlexGrow(1)),
+		// Destructive affordance: the theme's Button base is a medium blue,
+		// which both hides the red glyph and reads as a primary action — so
+		// the delete button overrides the pair, white glyph on danger red.
 		core.Button("✕", func() { remove(id) },
 			core.FontSize(13),
-			core.TextColor(colorDanger),
+			core.TextColor("#FFFFFF"),
+			core.BackgroundColor(colorDanger),
 			core.AccessibilityLabel("Delete "+t.Title),
 		),
 	))
