@@ -2,10 +2,11 @@
 # Build the Govinci xcframework with gomobile.
 #
 # Binds the `mobile` bridge package (the Swift runtime's call surface) plus
-# the demo app package, whose init() registers the root view with the bridge.
-# To ship your own app instead, replace the mobileapp path with your app's
-# package — any Go package whose init calls mobile.Register works (and which
-# exports at least one bindable symbol; see mobileapp.AppName for why).
+# an app package, whose init() registers the root view with the bridge.
+# The app package is the first argument, defaulting to the demo app:
+#   ios/build.sh ./examples/todoapp
+# Any Go package whose init calls mobile.Register works (and which exports at
+# least one bindable symbol; see mobileapp.AppName for why).
 #
 # Requires full Xcode (not just Command Line Tools): gomobile drives xcodebuild
 # to assemble the xcframework. After installing Xcode, point the tools at it:
@@ -26,9 +27,14 @@ fi
 
 cd "$(dirname "$0")/.."
 mkdir -p ios/Frameworks
+
+# Which app package to bind alongside the bridge. Defaults to the demo app;
+# pass another package path to ship a different app in the same shell.
+APP_PKG="${1:-./examples/mobileapp}"
+
 # Both slices so the same framework serves the simulator and real devices.
 # The framework module is named from -o (Govinci); symbols inside carry
-# per-package prefixes (Mobile*, Mobileapp*).
+# per-package prefixes (Mobile*, plus one per bound app package).
 gomobile bind -target=ios,iossimulator \
   -o ios/Frameworks/Govinci.xcframework \
-  ./mobile ./examples/mobileapp
+  ./mobile "$APP_PKG"

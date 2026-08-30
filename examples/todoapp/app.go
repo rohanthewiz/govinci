@@ -53,10 +53,11 @@ var filterLabels = []string{"All", "Active", "Done"}
 // app otherwise leans on the default theme's component styles; only accents
 // and de-emphasis colors are ours.
 const (
-	colorDim    = "#3C3C4399" // secondary text (iOS systemGray-ish)
-	colorAccent = "#E8F0FE"   // selected filter chip background
-	colorDanger = "#B3261E"   // per-row delete affordance
-	colorHair   = "#E5E5EA"   // hairline divider
+	colorDim       = "#3C3C4399" // secondary text (iOS systemGray-ish)
+	colorAccent    = "#E8F0FE"   // selected filter chip background
+	colorAccentInk = "#0B57D0"   // selected filter chip label — readable on colorAccent
+	colorDanger    = "#B3261E"   // per-row delete affordance
+	colorHair      = "#E5E5EA"   // hairline divider
 )
 
 // App is the root view. All state lives here, in the root component, and is
@@ -246,7 +247,13 @@ func filterBar(active int, onSelect func(int)) core.View {
 			}
 			accLabel := "Show " + strings.ToLower(label) + " tasks"
 			if i == active {
-				styles = append(styles, core.BackgroundColor(colorAccent))
+				// The theme's Button base paints a white label; on the pale
+				// accent background that is illegible, so the selected chip
+				// overrides both colors together.
+				styles = append(styles,
+					core.BackgroundColor(colorAccent),
+					core.TextColor(colorAccentInk),
+				)
 				accLabel += ", selected"
 			}
 			styles = append(styles, core.AccessibilityLabel(accLabel))
