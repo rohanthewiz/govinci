@@ -6,8 +6,10 @@
 //
 // The view deliberately exercises every event kind the bridge carries — void
 // (Button), text (Input), bool (Checkbox), int (TabView) — plus the async
-// push path (UseInterval ticking with no native event in flight), so it
-// doubles as a smoke test for the Compose runtime.
+// push path (UseInterval ticking with no native event in flight) and the
+// gap-5 renderer surface (List virtualization, container gestures via
+// OnClick/OnLongPress, accessibility labels), so it doubles as a smoke test
+// for the native runtimes.
 package mobileapp
 
 import (
@@ -40,10 +42,12 @@ func App(ctx *core.Context) core.View {
 			core.Tabs(
 				core.Tab("Counter", ""),
 				core.Tab("Form", ""),
+				core.Tab("Feed", ""),
 			),
 			core.Content(
 				counterTab(),
 				formTab(),
+				feedTab(),
 			),
 		),
 	)
@@ -69,6 +73,67 @@ func counterTab() core.View {
 				FontSize:  13,
 				TextColor: "#3C3C4399",
 			})),
+		).Render(ctx)
+	})
+}
+
+// feedTab exercises the gap-5 surface: a virtualized List of keyed rows,
+// row-level gestures (tap selects, long-press stars), and accessibility
+// semantics a screen reader can traverse.
+func feedTab() core.View {
+	return core.ComponentFunc(func(ctx *core.Context) *core.Node {
+		selected := core.NewState(ctx, 0)
+		starred := core.NewState(ctx, 0)
+
+		status := "Nothing selected"
+		if selected.Get() > 0 {
+			status = fmt.Sprintf("Selected: Article %d", selected.Get())
+		}
+		if starred.Get() > 0 {
+			status += fmt.Sprintf(" · Starred: Article %d", starred.Get())
+		}
+
+		articles := make([]int, 30)
+		for i := range articles {
+			articles[i] = i + 1
+		}
+
+		return core.Column(
+			core.Text(status, core.UseStyle(core.Style{
+				FontSize:  13,
+				TextColor: "#3C3C4399",
+			})),
+			// Decorative divider: hidden from the accessibility tree.
+			core.Box(
+				core.Height("1px"),
+				core.BackgroundColor("#E5E5EA"),
+				core.AccessibilityHidden(),
+			),
+			core.List(
+				core.FlexGrow(1),
+				core.For(articles, func(n int, _ int) core.View {
+					title := fmt.Sprintf("Article %d", n)
+					if starred.Get() == n {
+						title += " ★"
+					}
+					label := fmt.Sprintf("Article %d", n)
+					parts := []core.PropsAndChildren{
+						core.Padding(12),
+						core.OnClick(func() { selected.Set(n) }),
+						core.OnLongPress(func() { starred.Set(n) }),
+					}
+					if selected.Get() == n {
+						parts = append(parts, core.BackgroundColor("#E8F0FE"))
+						label += ", selected"
+					}
+					parts = append(parts,
+						core.AccessibilityLabel(label),
+						core.AccessibilityHint("Selects the article; long-press to star it"),
+						core.Text(title),
+					)
+					return core.Keyed(fmt.Sprintf("article-%d", n), core.Row(parts...))
+				}),
+			),
 		).Render(ctx)
 	})
 }

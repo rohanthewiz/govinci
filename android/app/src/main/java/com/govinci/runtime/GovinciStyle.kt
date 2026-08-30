@@ -13,6 +13,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
@@ -46,6 +49,9 @@ data class GovinciStyle(
     val alignItems: String,
     val flexGrow: Float,
     val lineHeight: Int,
+    val accessibilityLabel: String,
+    val accessibilityHint: String,
+    val accessibilityHidden: Boolean,
 ) {
     data class Edges(val top: Int, val right: Int, val bottom: Int, val left: Int)
 
@@ -72,6 +78,9 @@ data class GovinciStyle(
                 alignItems = obj.optString("AlignItems"),
                 flexGrow = obj.optDouble("FlexGrow", 0.0).toFloat(),
                 lineHeight = obj.optInt("LineHeight", 0),
+                accessibilityLabel = obj.optString("AccessibilityLabel"),
+                accessibilityHint = obj.optString("AccessibilityHint"),
+                accessibilityHidden = obj.optBoolean("AccessibilityHidden", false),
             )
         }
 
@@ -139,10 +148,29 @@ data class GovinciStyle(
  * `extra` is a scope-dependent modifier the parent computed for this child
  * (today: Row/Column weight from FlexGrow, which only exists as a RowScope/
  * ColumnScope extension and so cannot be built here).
+ *
+ * `gestures` is the node's tap/long-press modifier (see Renderer.kt's
+ * gestureModifier). It is a parameter rather than part of `extra` so it can
+ * be inserted at the right box layer: after background/border and before
+ * padding, making the whole visible box — padding included, margin excluded —
+ * the touch target, with the ripple clipped to the node's shape.
  */
-fun GovinciStyle?.boxModifier(extra: Modifier = Modifier): Modifier {
+fun GovinciStyle?.boxModifier(extra: Modifier = Modifier, gestures: Modifier = Modifier): Modifier {
     var m: Modifier = extra
-    if (this == null) return m
+    if (this == null) return m.then(gestures)
+
+    // Accessibility semantics come first so they annotate the element as a
+    // whole. Hidden wins: clearAndSetSemantics prunes this node and its
+    // subtree from the accessibility tree entirely (decorative content).
+    // TalkBack has no separate hint slot, so a hint is folded into the
+    // content description after the label.
+    if (accessibilityHidden) {
+        m = m.clearAndSetSemantics { }
+    } else if (accessibilityLabel.isNotEmpty() || accessibilityHint.isNotEmpty()) {
+        val description = listOf(accessibilityLabel, accessibilityHint)
+            .filter { it.isNotEmpty() }.joinToString(". ")
+        m = m.semantics { contentDescription = description }
+    }
 
     if (margin != Edges0) {
         m = m.padding(
@@ -162,6 +190,7 @@ fun GovinciStyle?.boxModifier(extra: Modifier = Modifier): Modifier {
     if (borderWidth > 0f && borderColor != null) {
         m = m.border(borderWidth.dp, borderColor, shape ?: RoundedCornerShape(0.dp))
     }
+    m = m.then(gestures)
     if (padding != Edges0) {
         m = m.padding(
             start = padding.left.dp, top = padding.top.dp,

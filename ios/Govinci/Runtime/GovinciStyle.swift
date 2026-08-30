@@ -40,6 +40,9 @@ struct GovinciStyle: Equatable {
     var alignItems: String = ""
     var flexGrow: CGFloat = 0
     var lineHeight: Int = 0
+    var accessibilityLabel: String = ""
+    var accessibilityHint: String = ""
+    var accessibilityHidden: Bool = false
 
     static func parse(_ obj: [String: Any]?) -> GovinciStyle? {
         guard let obj else { return nil }
@@ -67,6 +70,9 @@ struct GovinciStyle: Equatable {
         s.alignItems = str("AlignItems")
         s.flexGrow = num("FlexGrow")
         s.lineHeight = int("LineHeight")
+        s.accessibilityLabel = str("AccessibilityLabel")
+        s.accessibilityHint = str("AccessibilityHint")
+        s.accessibilityHidden = obj["AccessibilityHidden"] as? Bool ?? false
         return s
     }
 
@@ -125,6 +131,71 @@ enum GovinciGrow {
     case none, horizontal, vertical
 }
 
+/// Event dispatch for gesture-bearing boxes, injected as a plain closure so
+/// this file stays free of GovinciRuntime — the verify harness compiles the
+/// style/node/store layer without Renderer.swift or the runtime, and an
+/// EnvironmentKey referencing the runtime type would drag them in.
+/// GovinciRoot fills it in from the live runtime.
+private struct GovinciDispatchKey: EnvironmentKey {
+    static let defaultValue: (@MainActor (String) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var govinciDispatch: (@MainActor (String) -> Void)? {
+        get { self[GovinciDispatchKey.self] }
+        set { self[GovinciDispatchKey.self] = newValue }
+    }
+}
+
+/// Tap/long-press wiring for nodes that don't draw their own control (Button
+/// and the inputs handle their own interaction). Inserted into govinciBox
+/// after the background layer, so the touch target is the visible box —
+/// padding included, margin excluded — matching the Android renderer.
+/// The accessibility actions mirror the gestures so a VoiceOver user can
+/// activate a row (and reach its long-press action by name) without touch.
+private struct GovinciGestures: ViewModifier {
+    let onTap: String
+    let onLongPress: String
+    @Environment(\.govinciDispatch) private var dispatch
+
+    func body(content: Content) -> some View {
+        if onTap.isEmpty && onLongPress.isEmpty {
+            content
+        } else {
+            content
+                // Transparent regions of the box must still hit-test.
+                .contentShape(Rectangle())
+                .govinciOnTap(onTap, dispatch)
+                .govinciOnLongPress(onLongPress, dispatch)
+        }
+    }
+}
+
+extension View {
+    @ViewBuilder fileprivate func govinciOnTap(
+        _ id: String, _ dispatch: (@MainActor (String) -> Void)?
+    ) -> some View {
+        if id.isEmpty {
+            self
+        } else {
+            onTapGesture { dispatch?(id) }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { dispatch?(id) }
+        }
+    }
+
+    @ViewBuilder fileprivate func govinciOnLongPress(
+        _ id: String, _ dispatch: (@MainActor (String) -> Void)?
+    ) -> some View {
+        if id.isEmpty {
+            self
+        } else {
+            onLongPressGesture { dispatch?(id) }
+                .accessibilityAction(named: Text("Long press")) { dispatch?(id) }
+        }
+    }
+}
+
 extension View {
     /// Applies this node's box styling in CSS box-model order. CSS lists the
     /// layers outermost-first (margin → size → shadow → clip → background →
@@ -132,11 +203,18 @@ extension View {
     /// so the chain below is that list reversed — and the order is
     /// load-bearing: background before clipShape would leave square corners
     /// painted, padding after background would paint outside the box, etc.
-    func govinciBox(_ s: GovinciStyle?, grow: GovinciGrow = .none) -> some View {
+    ///
+    /// `onTap`/`onLongPress` are the node's gesture callback IDs (empty when
+    /// absent); see GovinciGestures for where they sit in the layer order.
+    func govinciBox(
+        _ s: GovinciStyle?, grow: GovinciGrow = .none,
+        onTap: String = "", onLongPress: String = ""
+    ) -> some View {
         let shape = RoundedCornerShapeIfAny(radius: s?.borderRadius ?? 0)
         return self
             .padding((s?.padding ?? .zero).insets)
             .background(s?.background ?? .clear)
+            .modifier(GovinciGestures(onTap: onTap, onLongPress: onLongPress))
             .govinciClip(shape)
             .govinciBorder(shape, color: s?.borderColor, width: s?.borderWidth ?? 0)
             .govinciShadow(s?.shadow ?? 0)
@@ -147,6 +225,36 @@ extension View {
             // "hidden" keeps the node's space but not its pixels ("none" is
             // handled earlier by not rendering the node at all — see RenderNode).
             .opacity(s?.display == "hidden" ? 0 : 1)
+            .govinciAccessibility(s)
+    }
+
+    /// Accessibility semantics from the Go style. Hidden wins and prunes the
+    /// whole subtree. A label on a container collapses its children into one
+    /// accessibility element (the feed-row pattern: one swipe stop per row,
+    /// announced by the label) — leaves are single elements already, so the
+    /// combine is a no-op for them.
+    @ViewBuilder fileprivate func govinciAccessibility(_ s: GovinciStyle?) -> some View {
+        if s?.accessibilityHidden == true {
+            accessibilityHidden(true)
+        } else if let s, !s.accessibilityLabel.isEmpty {
+            accessibilityElement(children: .combine)
+                .accessibilityLabel(s.accessibilityLabel)
+                .govinciA11yHint(s.accessibilityHint)
+        } else if let s, !s.accessibilityHint.isEmpty {
+            govinciA11yHint(s.accessibilityHint)
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder fileprivate func govinciA11yHint(_ hint: String) -> some View {
+        if hint.isEmpty { self } else { accessibilityHint(hint) }
+    }
+
+    /// Conditional label for the Image "alt" fallback (internal because the
+    /// Image case in Renderer.swift decides whether the fallback applies).
+    @ViewBuilder func govinciAltLabel(_ label: String) -> some View {
+        if label.isEmpty { self } else { accessibilityLabel(label) }
     }
 
     @ViewBuilder fileprivate func govinciClip(_ shape: RoundedRectangle?) -> some View {

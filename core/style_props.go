@@ -211,6 +211,32 @@ func PaddingVertical(px int) StyleProp {
 	})
 }
 
+// AccessibilityLabel gives screen readers a name for the element (TalkBack
+// contentDescription, VoiceOver label). Set it on anything non-textual a user
+// can perceive or activate — images, icon buttons, tappable rows.
+func AccessibilityLabel(label string) StyleProp {
+	return styleFunc(func(s *Style) {
+		s.AccessibilityLabel = label
+	})
+}
+
+// AccessibilityHint describes the *result* of activating the element
+// ("Opens the article"). VoiceOver reads it natively; TalkBack has no hint
+// slot, so the Android renderer appends it to the content description.
+func AccessibilityHint(hint string) StyleProp {
+	return styleFunc(func(s *Style) {
+		s.AccessibilityHint = hint
+	})
+}
+
+// AccessibilityHidden removes the element (and its subtree) from the
+// accessibility tree — for decorative content a screen reader should skip.
+func AccessibilityHidden() StyleProp {
+	return styleFunc(func(s *Style) {
+		s.AccessibilityHidden = true
+	})
+}
+
 func (s Style) With(other Style) Style {
 	merged := s
 	UseStyle(other).Apply(&merged)

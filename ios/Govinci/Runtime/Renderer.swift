@@ -39,6 +39,10 @@ struct GovinciRoot: View {
             // from the top and lets the tree decide its own extent.
             RenderNode(node: root)
                 .environment(\.govinciRuntime, runtime)
+                // The style layer's gesture modifier dispatches through this
+                // plain closure instead of the runtime type; see
+                // GovinciDispatchKey for why the indirection exists.
+                .environment(\.govinciDispatch) { [runtime] id in runtime.click(id) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
@@ -67,7 +71,11 @@ struct RenderNode: View {
 
             case "Row": GovinciRow(node: node, grow: grow)
             case "Column", "Card": GovinciColumn(node: node, grow: grow) // Card = Column whose Go theme style carries the card look
-            case "Box": ZStack(alignment: .topLeading) { PlainChildren(node: node) }.govinciBox(node.style, grow: grow)
+            case "List": GovinciList(node: node, grow: grow)
+            case "Box": ZStack(alignment: .topLeading) { PlainChildren(node: node) }
+                .govinciBox(node.style, grow: grow,
+                            onTap: node.stringProp("onClick"),
+                            onLongPress: node.stringProp("onLongPress"))
             case "Spacer": Color.clear.frame(width: CGFloat(node.intProp("size")), height: CGFloat(node.intProp("size")))
             case "Scroll":
                 ScrollView {
@@ -83,13 +91,21 @@ struct RenderNode: View {
             case "TabView": GovinciTabView(node: node, grow: grow)
             case "Modal": GovinciModal(node: node)
             case "Image":
+                // The AccessibilityLabel style prop travels through govinciBox;
+                // the legacy "alt" prop fills in only when no style label is set
+                // (an unconditional outer accessibilityLabel would override the
+                // box's label with an empty string).
                 AsyncImage(url: URL(string: node.stringProp("src"))) { image in
                     image.resizable().scaledToFit()
                 } placeholder: {
                     ProgressView()
                 }
-                .govinciBox(node.style, grow: grow)
-                .accessibilityLabel(node.stringProp("alt"))
+                .govinciBox(node.style, grow: grow,
+                            onTap: node.stringProp("onClick"),
+                            onLongPress: node.stringProp("onLongPress"))
+                .govinciAltLabel(
+                    (node.style?.accessibilityLabel ?? "").isEmpty
+                        ? node.stringProp("alt") : "")
 
             // Camera capture needs an AVFoundation integration pass of its
             // own; until then render the styled surface and any overlay so
@@ -141,7 +157,9 @@ private struct GovinciRow: View {
         HStack(alignment: crossAlignmentV(s), spacing: CGFloat(s?.gap ?? 0)) {
             FlexChildren(node: node, axis: .horizontal)
         }
-        .govinciBox(s, grow: grow)
+        .govinciBox(s, grow: grow,
+                    onTap: node.stringProp("onClick"),
+                    onLongPress: node.stringProp("onLongPress"))
     }
 }
 
@@ -154,7 +172,9 @@ private struct GovinciColumn: View {
         VStack(alignment: crossAlignmentH(s), spacing: CGFloat(s?.gap ?? 0)) {
             FlexChildren(node: node, axis: .vertical)
         }
-        .govinciBox(s, grow: grow)
+        .govinciBox(s, grow: grow,
+                    onTap: node.stringProp("onClick"),
+                    onLongPress: node.stringProp("onLongPress"))
     }
 }
 
@@ -192,6 +212,52 @@ private struct FlexChildren: View {
     }
 }
 
+/// The virtualized sibling of GovinciColumn: LazyVStack materializes only the
+/// rows near the viewport as the ScrollView scrolls, so Go can hand over a
+/// thousand-row feed as plain data. (SwiftUI's List is deliberately not used:
+/// it brings UITableView chrome — separators, insets, selection styling —
+/// that Govinci's unopinionated box model doesn't ask for.)
+///
+/// Go's For helper wraps generated rows in a Fragment node; those wrappers
+/// are flattened so each row is an individually lazy item rather than one
+/// giant Fragment item. Row identity is viewID (explicit key, else object
+/// identity), same as every other children loop.
+private struct GovinciList: View {
+    let node: GovinciNode
+    let grow: GovinciGrow
+
+    var body: some View {
+        let s = node.style
+        ScrollView {
+            LazyVStack(alignment: crossAlignmentH(s), spacing: CGFloat(s?.gap ?? 0)) {
+                ForEach(flattenFragments(node.children), id: \.viewID) { row in
+                    RenderNode(node: row)
+                }
+            }
+        }
+        .govinciBox(s, grow: grow,
+                    onTap: node.stringProp("onClick"),
+                    onLongPress: node.stringProp("onLongPress"))
+    }
+}
+
+/// Inlines Fragment/Theme grouping nodes so their children become list rows.
+private func flattenFragments(_ children: [GovinciNode]) -> [GovinciNode] {
+    guard children.contains(where: { $0.type == "Fragment" || $0.type == "Theme" }) else {
+        return children
+    }
+    var out: [GovinciNode] = []
+    out.reserveCapacity(children.count)
+    for child in children {
+        if child.type == "Fragment" || child.type == "Theme" {
+            out.append(contentsOf: flattenFragments(child.children))
+        } else {
+            out.append(child)
+        }
+    }
+    return out
+}
+
 /// AlignItems governs cross-axis placement; the DSL's simpler Align
 /// ("center"/"end") acts as a fallback when AlignItems is unset.
 private func crossAlignmentH(_ s: GovinciStyle?) -> HorizontalAlignment {
@@ -223,7 +289,9 @@ private struct GovinciText: View {
     var body: some View {
         Text(node.stringProp("content"))
             .govinciTextStyle(node.style)
-            .govinciBox(node.style, grow: grow)
+            .govinciBox(node.style, grow: grow,
+                        onTap: node.stringProp("onClick"),
+                        onLongPress: node.stringProp("onLongPress"))
     }
 }
 

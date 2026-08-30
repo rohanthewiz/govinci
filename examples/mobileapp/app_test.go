@@ -84,3 +84,43 @@ func TestDemoAppRendersAndDispatchesEvents(t *testing.T) {
 		t.Errorf("input patches don't update the greeting:\n%s", patches)
 	}
 }
+
+func TestFeedTabListGestures(t *testing.T) {
+	// The gap-5 surface end to end at the bridge level: the Feed tab holds a
+	// List whose rows carry OnClick/OnLongPress behavior props — dispatching
+	// them must land in Go state and patch the status line back out.
+	mobile.TriggerIntCallback(mustFindT(t, "TabView", "onTabChange"), 2)
+
+	patches := mobile.TriggerCallback(mustFindT(t, "Row", "onClick"))
+	if !strings.Contains(patches, "Selected: Article 1") {
+		t.Errorf("row tap patches don't update the selection status:\n%s", patches)
+	}
+
+	patches = mobile.TriggerCallback(mustFindT(t, "Row", "onLongPress"))
+	if !strings.Contains(patches, "Starred: Article 1") {
+		t.Errorf("row long-press patches don't update the starred status:\n%s", patches)
+	}
+	if !strings.Contains(patches, "Article 1 ★") {
+		t.Errorf("row long-press patches don't restyle the row title:\n%s", patches)
+	}
+
+	// Leave the app back on the Counter tab so test order doesn't matter to
+	// any later bridge-level test.
+	mobile.TriggerIntCallback(mustFindT(t, "TabView", "onTabChange"), 0)
+}
+
+// mustFindT re-reads the current tree and returns the named prop of the first
+// matching node — the same "dispatch only IDs from the live tree" discipline
+// the shells follow.
+func mustFindT(t *testing.T, nodeType, prop string) string {
+	t.Helper()
+	var tree node
+	if err := json.Unmarshal([]byte(mobile.RenderInitial()), &tree); err != nil {
+		t.Fatalf("tree is not valid JSON: %v", err)
+	}
+	v, ok := findProp(&tree, nodeType, prop)
+	if !ok {
+		t.Fatalf("no %s with %s in current tree", nodeType, prop)
+	}
+	return v
+}

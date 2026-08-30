@@ -68,4 +68,53 @@ final class GovinciUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Count: 3"].waitForExistence(timeout: 5),
                       "counter state lost across tab switch")
     }
+
+    // The gap-5 surface on a real simulator: List virtualization, container
+    // gestures (tap/long-press on Rows), and the accessibility semantics the
+    // Go styles declare — the rows are addressed here BY their accessibility
+    // label + button trait, so element lookup itself proves the a11y wiring.
+    func testFeedListGesturesAndVirtualization() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        app.buttons["Feed"].tap()
+        XCTAssertTrue(app.staticTexts["Nothing selected"].waitForExistence(timeout: 10),
+                      "feed tab did not render")
+
+        // Virtualization probe: the last row must not be in the viewport while
+        // the list shows its top. `exists` is deliberately not asserted false —
+        // the accessibility snapshot XCUITest queries through is allowed to
+        // realize offscreen lazy rows (VoiceOver enumerates them), and does.
+        // isHittable is viewport-dependent: false here, true after scrolling.
+        let lastRow = app.buttons["Article 30"]
+        XCTAssertFalse(lastRow.isHittable,
+                       "row 30 is on screen at the top of the list")
+
+        // Tap = select. The row's accessibility label flips to "…, selected".
+        app.buttons["Article 3"].tap()
+        XCTAssertTrue(app.staticTexts["Selected: Article 3"].waitForExistence(timeout: 5),
+                      "row tap did not round-trip to Go")
+        XCTAssertTrue(app.buttons["Article 3, selected"].waitForExistence(timeout: 5),
+                      "selected row's accessibility label did not update")
+
+        // Long-press = star, asserted through the status line. (The row's
+        // starred title "Article 5 ★" is deliberately NOT queried as a static
+        // text: the accessibility label on the row combines its children into
+        // one element, so inner texts are not individually exposed — that is
+        // the a11y design, one swipe stop per row.)
+        app.buttons["Article 5"].press(forDuration: 0.8)
+        XCTAssertTrue(
+            app.staticTexts["Selected: Article 3 · Starred: Article 5"]
+                .waitForExistence(timeout: 5),
+            "long-press did not round-trip to Go")
+
+        // Scroll far enough and the tail row enters the viewport.
+        var swipes = 0
+        while !lastRow.isHittable && swipes < 8 {
+            app.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(lastRow.isHittable,
+                      "row 30 never came on screen after scrolling")
+    }
 }

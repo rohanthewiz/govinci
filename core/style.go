@@ -45,6 +45,17 @@ type Style struct {
 	FlexBasis      string
 	FlexShrink     float64
 	FlexGrow       float64
+
+	// Accessibility semantics. These live on Style rather than Props so every
+	// builder that takes StyleProps — leaves and containers alike — supports
+	// them without a signature change, and so the reconciler's value-compared
+	// update-style patches carry changes to them like any visual property.
+	// Renderers map them onto the platform's semantics layer: contentDescription
+	// / clearAndSetSemantics on Android, accessibilityLabel / accessibilityHint /
+	// accessibilityHidden on iOS.
+	AccessibilityLabel  string
+	AccessibilityHint   string
+	AccessibilityHidden bool
 }
 
 type Weight int

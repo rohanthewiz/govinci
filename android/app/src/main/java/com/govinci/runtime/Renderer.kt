@@ -1,6 +1,8 @@
 package com.govinci.runtime
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +17,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -89,7 +93,8 @@ fun RenderNode(node: GovinciNode, extra: Modifier = Modifier) {
 
         "Row" -> GovinciRow(node, extra)
         "Column", "Card" -> GovinciColumn(node, extra) // Card = Column whose Go theme style carries the card look
-        "Box" -> Box(style.boxModifier(extra)) { RenderChildren(node) }
+        "List" -> GovinciList(node, extra)
+        "Box" -> Box(style.boxModifier(extra, gestureModifier(node))) { RenderChildren(node) }
         "Spacer" -> Spacer(Modifier.size(node.intProp("size").dp))
         "Scroll" -> Column(
             style.boxModifier(extra).verticalScroll(rememberScrollState())
@@ -100,8 +105,15 @@ fun RenderNode(node: GovinciNode, extra: Modifier = Modifier) {
         "Modal" -> GovinciModal(node)
         "Image" -> AsyncImage(
             model = node.stringProp("src"),
-            contentDescription = node.stringProp("alt").ifEmpty { null },
-            modifier = style.boxModifier(extra),
+            // The Go-side AccessibilityLabel style prop is the first choice
+            // for the description; the legacy "alt" prop remains a fallback.
+            // The label is delivered through AsyncImage's own semantics slot,
+            // so it is stripped from the style handed to boxModifier — both
+            // paths setting contentDescription would double-announce.
+            contentDescription = (style?.accessibilityLabel ?: "")
+                .ifEmpty { node.stringProp("alt") }.ifEmpty { null },
+            modifier = style?.copy(accessibilityLabel = "", accessibilityHint = "")
+                .boxModifier(extra, gestureModifier(node)),
         )
 
         // Camera capture needs a CameraX integration pass of its own; until
@@ -126,6 +138,28 @@ private fun RenderChildren(node: GovinciNode) {
     }
 }
 
+/**
+ * Tap/long-press wiring for nodes that don't draw their own control (Button
+ * and the inputs handle their own interaction). Empty when the node carries
+ * neither callback, so plain content pays nothing. combinedClickable also
+ * registers the click/long-click accessibility actions, so a gesture-bearing
+ * row is activatable from TalkBack, not just by touch.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun gestureModifier(node: GovinciNode): Modifier {
+    val onClick = node.stringProp("onClick")
+    val onLongPress = node.stringProp("onLongPress")
+    if (onClick.isEmpty() && onLongPress.isEmpty()) return Modifier
+    val runtime = LocalGovinciRuntime.current
+    return Modifier.combinedClickable(
+        onClick = { if (onClick.isNotEmpty()) runtime.click(onClick) },
+        onLongClick = if (onLongPress.isEmpty()) null else {
+            { runtime.click(onLongPress) }
+        },
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Leaf components
 // ---------------------------------------------------------------------------
@@ -135,7 +169,7 @@ private fun GovinciText(node: GovinciNode, extra: Modifier) {
     val s = node.style
     Text(
         text = node.stringProp("content"),
-        modifier = s.boxModifier(extra),
+        modifier = s.boxModifier(extra, gestureModifier(node)),
         style = textStyle(s),
     )
 }
@@ -285,7 +319,7 @@ private fun GovinciTextField(
 private fun GovinciRow(node: GovinciNode, extra: Modifier) {
     val s = node.style
     Row(
-        modifier = s.boxModifier(extra),
+        modifier = s.boxModifier(extra, gestureModifier(node)),
         horizontalArrangement = horizontalArrangement(s),
         verticalAlignment = when (s?.alignItems) {
             "center" -> Alignment.CenterVertically
@@ -299,7 +333,7 @@ private fun GovinciRow(node: GovinciNode, extra: Modifier) {
 private fun GovinciColumn(node: GovinciNode, extra: Modifier) {
     val s = node.style
     Column(
-        modifier = s.boxModifier(extra),
+        modifier = s.boxModifier(extra, gestureModifier(node)),
         verticalArrangement = verticalArrangement(s),
         // AlignItems governs cross-axis placement; the DSL's simpler Align
         // ("center"/"end") acts as a fallback when AlignItems is unset.
@@ -334,6 +368,54 @@ private fun ColumnScope.ColumnChildren(node: GovinciNode) {
             RenderNode(child, if (grow > 0f) Modifier.weight(grow) else Modifier)
         }
     }
+}
+
+/**
+ * The virtualized sibling of GovinciColumn: LazyColumn composes only the rows
+ * on screen and recycles compositions by contentType as the user scrolls, so
+ * Go can hand over a thousand-row feed as plain data.
+ *
+ * Go's For helper wraps generated rows in a Fragment node; those wrappers are
+ * flattened here so each row is an individually recycled lazy item rather
+ * than one giant Fragment item. Keys come from the row nodes (Keyed in Go);
+ * an unkeyed row falls back to positional identity, which behaves like
+ * Column but loses row state on reorder — same contract as key() above.
+ */
+@Composable
+private fun GovinciList(node: GovinciNode, extra: Modifier) {
+    val s = node.style
+    // Reading node.children in composition subscribes this scope to the
+    // SnapshotStateList, so structural patches recompose the list.
+    val rows = flattenFragments(node.children)
+    LazyColumn(
+        modifier = s.boxModifier(extra, gestureModifier(node)),
+        verticalArrangement = verticalArrangement(s),
+        horizontalAlignment = when (s?.alignItems?.ifEmpty { s.align }) {
+            "center" -> Alignment.CenterHorizontally
+            "flex-end", "end" -> Alignment.End
+            else -> Alignment.Start
+        },
+    ) {
+        itemsIndexed(
+            rows,
+            key = { i, row -> row.key.ifEmpty { i } },
+            contentType = { _, row -> row.type },
+        ) { _, row -> RenderNode(row) }
+    }
+}
+
+/** Inlines Fragment/Theme grouping nodes so their children become list rows. */
+private fun flattenFragments(children: List<GovinciNode>): List<GovinciNode> {
+    if (children.none { it.type == "Fragment" || it.type == "Theme" }) return children
+    val out = ArrayList<GovinciNode>(children.size)
+    for (child in children) {
+        if (child.type == "Fragment" || child.type == "Theme") {
+            out.addAll(flattenFragments(child.children))
+        } else {
+            out.add(child)
+        }
+    }
+    return out
 }
 
 private fun horizontalArrangement(s: GovinciStyle?): Arrangement.Horizontal =

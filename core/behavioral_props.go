@@ -29,3 +29,11 @@ func OnClick(handler func()) BehaviorProp {
 func OnTouch(handler func()) BehaviorProp {
 	return On("Touch", handler)
 }
+
+// OnLongPress fires after the platform's long-press timeout (~500ms) without
+// the finger lifting. A node may carry both OnClick and OnLongPress: the
+// renderers wire them as one gesture recognizer (combinedClickable on
+// Android, tap+longPress on iOS), so a long press never also fires the click.
+func OnLongPress(handler func()) BehaviorProp {
+	return On("LongPress", handler)
+}

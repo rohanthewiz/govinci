@@ -4,49 +4,44 @@ import "fmt"
 
 type PropsAndChildren any
 
+// containerNode builds a container node of the given type from a mixed
+// argument list of style props, behavior props, and child views. All the
+// flex-style containers (Row, Column, Card, Box, List) share it so behavior
+// props work uniformly: BehaviorProps apply to the node that is actually
+// returned — an earlier version of Column applied them to a throwaway props
+// map, so OnClick on a container silently never reached the renderer.
+//
+// Ordering contract: behavior props register their callbacks in argument
+// order, before any child renders (children are collected during the loop
+// but rendered after it) — so a container's own callback IDs always precede
+// its children's within a render pass, regardless of argument interleaving.
+func containerNode(ctx *Context, typ string, base Style, items []PropsAndChildren) *Node {
+	style := &base
+	n := &Node{Type: typ, Style: style}
+	var children []View
+	for _, item := range items {
+		switch v := item.(type) {
+		case StyleProp:
+			v.Apply(style)
+		case View:
+			children = append(children, v)
+		case BehaviorProp:
+			v.Apply(ctx, n)
+		}
+	}
+	n.Children = renderAll(ctx, children)
+	return n
+}
+
 func Row(stylePropsAndChildren ...PropsAndChildren) View {
 	return ComponentFunc(func(ctx *Context) *Node {
-		base := ctx.Theme().Components.Row
-		style := &base
-		var children []View
-
-		for _, item := range stylePropsAndChildren {
-			switch v := item.(type) {
-			case StyleProp:
-				v.Apply(style)
-			case View:
-				children = append(children, v)
-			}
-		}
-
-		return &Node{
-			Type:     "Row",
-			Style:    style,
-			Children: renderAll(ctx, children),
-		}
+		return containerNode(ctx, "Row", ctx.Theme().Components.Row, stylePropsAndChildren)
 	})
 }
 
 func Card(stylePropsAndChildren ...PropsAndChildren) View {
 	return ComponentFunc(func(ctx *Context) *Node {
-		base := ctx.Theme().Components.Card
-		style := &base
-		var children []View
-
-		for _, item := range stylePropsAndChildren {
-			switch v := item.(type) {
-			case StyleProp:
-				v.Apply(style)
-			case View:
-				children = append(children, v)
-			}
-		}
-
-		return &Node{
-			Type:     "Card",
-			Style:    style,
-			Children: renderAll(ctx, children),
-		}
+		return containerNode(ctx, "Card", ctx.Theme().Components.Card, stylePropsAndChildren)
 	})
 }
 
@@ -99,49 +94,14 @@ func Fragment(children ...View) View {
 
 func Column(stylePropsAndChildren ...PropsAndChildren) View {
 	return ComponentFunc(func(ctx *Context) *Node {
-		base := ctx.Theme().Components.Column
-		style := &base
-		var children []View
-		props := make(map[string]any)
-		for _, item := range stylePropsAndChildren {
-			switch v := item.(type) {
-			case StyleProp:
-				v.Apply(style)
-			case View:
-				children = append(children, v)
-			case BehaviorProp:
-				v.Apply(ctx, &Node{Props: props})
-			}
-		}
-
-		return &Node{
-			Type:     "Column",
-			Style:    style,
-			Children: renderAll(ctx, children),
-		}
+		return containerNode(ctx, "Column", ctx.Theme().Components.Column, stylePropsAndChildren)
 	})
 }
+
 func Box(stylePropsAndChildren ...PropsAndChildren) View {
 	return ComponentFunc(func(ctx *Context) *Node {
-		style := &Style{}
-		var children []View
-
-		for _, item := range stylePropsAndChildren {
-			switch v := item.(type) {
-			case StyleProp:
-				v.Apply(style)
-			case View:
-				children = append(children, v)
-			case BehaviorProp:
-				// future event handlers
-			}
-		}
-
-		return &Node{
-			Type:     "Box", // pode cair como "div" no runtime
-			Style:    style,
-			Children: renderAll(ctx, children),
-		}
+		// Box has no theme base by design: it is the unopinionated container.
+		return containerNode(ctx, "Box", Style{}, stylePropsAndChildren)
 	})
 }
 func Divider(height int, color string) View {

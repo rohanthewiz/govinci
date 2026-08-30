@@ -118,6 +118,15 @@ func main() {
 	// Bool event: toggle the subscription checkbox.
 	rec.append(mobile.TriggerBoolCallback(mustFind(mobile.RenderInitial(), "Checkbox", "onToggle"), true))
 
+	// Gap-5 surface: over to the Feed tab (index 2), then drive the List rows
+	// through their container behavior props — a tap (onClick) selects a row,
+	// a long-press (onLongPress) stars one. The first Row carrying each prop
+	// is article 1's row; both events restyle rows and rewrite the status
+	// line, exercising keyed-children diffs inside a List node.
+	rec.append(mobile.TriggerIntCallback(mustFind(mobile.RenderInitial(), "TabView", "onTabChange"), 2))
+	rec.append(mobile.TriggerCallback(mustFind(mobile.RenderInitial(), "Row", "onClick")))
+	rec.append(mobile.TriggerCallback(mustFind(mobile.RenderInitial(), "Row", "onLongPress")))
+
 	// Int event again: back to the Counter tab, which replaces the subtree.
 	rec.append(mobile.TriggerIntCallback(mustFind(mobile.RenderInitial(), "TabView", "onTabChange"), 0))
 
