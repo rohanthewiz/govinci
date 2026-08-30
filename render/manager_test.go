@@ -85,10 +85,9 @@ func TestStateChangePatchesOnlyTheAffectedNode(t *testing.T) {
 		t.Fatalf("button is missing its onClick callback ID: %+v", tree.Children[1].Props)
 	}
 
-	// Dispatch the event exactly as a native bridge does: by callback ID.
-	core.TriggerCallback(onClick)
-
-	patches := decodePatches(t, m.RenderAgain())
+	// Dispatch the event exactly as a native bridge does: by callback ID,
+	// through the manager, which returns the resulting patches directly.
+	patches := decodePatches(t, m.DispatchCallback(onClick))
 	if len(patches) != 1 {
 		t.Fatalf("expected exactly 1 patch (the Text update), got %d: %+v", len(patches), patches)
 	}
@@ -111,8 +110,7 @@ func TestCallbackIDSurvivesReRenderAndKeepsWorking(t *testing.T) {
 	onClick := tree.Children[1].Props["onClick"].(string)
 
 	for i := 1; i <= 3; i++ {
-		core.TriggerCallback(onClick)
-		patches := decodePatches(t, m.RenderAgain())
+		patches := decodePatches(t, m.DispatchCallback(onClick))
 		if len(patches) != 1 || patches[0].TargetID != "root/0" {
 			t.Fatalf("click %d: expected single Text patch, got %+v", i, patches)
 		}

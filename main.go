@@ -24,13 +24,12 @@ func RenderInitial() string {
 	return manager.RenderAndGetPatches()
 }
 
-// Exported to native (to simulate external event)
+// Exported to native (to simulate external event). Dispatch goes through the
+// manager so the handler and its render run under one render mutex.
 func TriggerCallback(id string) string {
-	core.TriggerCallback(id)
-	return manager.RenderAndGetPatches()
+	return manager.DispatchCallback(id)
 }
 
 func TriggerTextCallback(id, val string) string {
-	core.TriggerTextCallback(id, val)
-	return manager.RenderAndGetPatches()
+	return manager.DispatchTextCallback(id, val)
 }

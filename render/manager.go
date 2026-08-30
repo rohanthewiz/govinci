@@ -28,12 +28,16 @@ type PatchListener interface {
 }
 
 type Manager struct {
-	// mu serializes every render pass. Render passes mutate shared state that
-	// cannot tolerate interleaving — the context's hook cursor, the global
-	// callback registry (BeginRenderPass resets its counters), and
-	// currentTree — and passes are started from two directions: the native
-	// event path (bridge calls RenderAgain after dispatching a callback) and
-	// the push pump below.
+	// mu serializes every render pass AND every event dispatch (Dispatch*
+	// below). Render passes mutate shared state that cannot tolerate
+	// interleaving — the context's hook cursor, its callback registry
+	// (BeginRenderPass resets the ID counters), and currentTree — and passes
+	// are started from two directions: the native event path (Dispatch*) and
+	// the push pump below. Folding dispatch under the same mutex is what
+	// marshals app mutations: an event handler can never run in the middle of
+	// a pump render pass, so handlers observe settled trees and their writes
+	// are rendered atomically by the pass that follows within the same lock
+	// hold.
 	mu          sync.Mutex
 	currentTree *core.Node
 	context     *core.Context
@@ -145,7 +149,7 @@ func (m *Manager) hasInitialRender() bool {
 func (r *Manager) RenderInitial() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	core.BeginRenderPass()
+	r.context.BeginRenderPass()
 	r.context.Reset()
 	r.currentTree = r.renderFunc(r.context).Render(r.context)
 	return renderJSON(r.currentTree)
@@ -155,22 +159,70 @@ func (r *Manager) RenderInitial() string {
 func (r *Manager) RenderAgain() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.renderAgainLocked()
+}
+
+// renderAgainLocked is the diff-producing render pass; callers must hold mu.
+func (r *Manager) renderAgainLocked() string {
 	// BeginRenderPass must precede the render so callback IDs restart from
 	// zero and re-registrations line up with the previous pass; the purge
 	// after the diff then drops only IDs no longer registered this pass.
-	core.BeginRenderPass()
+	r.context.BeginRenderPass()
 	r.context.Reset()
 	newTree := r.renderFunc(r.context).Render(r.context)
 	patches := reconcile.Diff(r.currentTree, newTree, "root")
 	r.currentTree = newTree
 	r.context.ClearDirty()
-	core.PurgeUnusedCallbacks()
+	r.context.PurgeUnusedCallbacks()
 	if patches == nil {
 		// A no-change render must serialize as "[]", not "null": the native
 		// runtimes iterate the decoded patch list without a null check.
 		patches = []reconcile.Patch{}
 	}
 	return renderJSON(patches)
+}
+
+// DispatchCallback runs the void handler registered under id (a button tap,
+// say), then renders and returns the resulting patches — the whole sequence
+// under the render mutex, so the handler cannot interleave with a pump render
+// pass and its state writes are diffed in the same lock hold. This is the
+// event path native bridges should use; the Dispatch*/Trigger split exists
+// because dispatching a handler without an immediate render (the async shape)
+// is only wanted by hosts that poll or rely purely on the push channel.
+//
+// Handlers may call State.Set freely: the resulting RequestRender nudge is
+// asynchronous (a buffered-channel send plus a goroutine hop), so nothing in
+// the handler path re-enters this mutex. The pump's follow-up pass then finds
+// an empty diff and pushes nothing.
+func (m *Manager) DispatchCallback(id string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.context.TriggerCallback(id)
+	return m.renderAgainLocked()
+}
+
+// DispatchTextCallback is DispatchCallback for string-carrying events.
+func (m *Manager) DispatchTextCallback(id string, value string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.context.TriggerTextCallback(id, value)
+	return m.renderAgainLocked()
+}
+
+// DispatchBoolCallback is DispatchCallback for bool-carrying events.
+func (m *Manager) DispatchBoolCallback(id string, value bool) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.context.TriggerBoolCallback(id, value)
+	return m.renderAgainLocked()
+}
+
+// DispatchIntCallback is DispatchCallback for int-carrying events.
+func (m *Manager) DispatchIntCallback(id string, value int) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.context.TriggerIntCallback(id, value)
+	return m.renderAgainLocked()
 }
 
 // JSON encoder
@@ -185,7 +237,7 @@ func renderJSON[T any](v T) string {
 func (r *Manager) RenderAndGetPatches() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	core.BeginRenderPass()
+	r.context.BeginRenderPass()
 	r.context.Cursor = 0
 	newTree := r.renderFunc(r.context).Render(r.context)
 

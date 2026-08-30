@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/GraHms/govinci/core"
 	"github.com/GraHms/govinci/htmlout"
 )
@@ -18,25 +19,33 @@ func App(ctx *core.Context) core.View {
 	)
 }
 
+// renderTree runs one full render pass by hand — a host without a
+// render.Manager (like this HTML exporter) drives the pass boundary itself:
+// BeginRenderPass so callback IDs restart at zero, then render from the root.
+func renderTree(ctx *core.Context) *core.Node {
+	ctx.BeginRenderPass()
+	return core.Render(ctx, core.ComponentFunc(func(ctx *core.Context) *core.Node {
+		return App(ctx).Render(ctx)
+	}))
+}
+
 func main() {
 	ctx := core.NewContext()
-	runtime := core.NewRuntime(App(ctx), ctx)
 
 	// First render
-	tree := runtime.Render()
-	html := htmlout.ExportHTML(tree)
+	tree := renderTree(ctx)
 	fmt.Println("Primeiro Render:")
-	fmt.Println(html)
+	fmt.Println(htmlout.ExportHTML(tree))
 
-	// Simula evento de input vindo do nativo
-	runtime.SendEvent(map[string]any{
+	// Simula evento de input vindo do nativo, endereçado pelo callback ID que
+	// o primeiro render registou ("txt_cb_0": primeiro text-callback do passo).
+	ctx.ReceiveEventPayload(map[string]any{
 		"callback": "txt_cb_0",
 		"value":    "Ismael",
 	})
 
 	// Re-render após evento
-	tree = runtime.Render()
-	html = htmlout.ExportHTML(tree)
+	tree = renderTree(ctx)
 	fmt.Println("\nApós evento de input:")
-	fmt.Println(html)
+	fmt.Println(htmlout.ExportHTML(tree))
 }

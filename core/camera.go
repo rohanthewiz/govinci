@@ -32,11 +32,11 @@ func CameraView(props ...CameraProp) View {
 		}
 
 		if node.OnCapture != nil {
-			propMap["onCapture"] = registerTextCallback(node.OnCapture)
+			propMap["onCapture"] = ctx.registerTextCallback(node.OnCapture)
 		}
 
 		if node.OnError != nil {
-			propMap["onError"] = registerTextCallback(node.OnError)
+			propMap["onError"] = ctx.registerTextCallback(node.OnError)
 		}
 
 		children := []View{}

@@ -68,28 +68,26 @@ func SetListener(l PatchListener) {
 }
 
 // TriggerCallback dispatches a void event (e.g. a button tap) by callback ID
-// and returns the resulting patches.
+// and returns the resulting patches. Dispatch goes through the manager so the
+// handler and its follow-up render run under the render mutex — an event can
+// never interleave with a push-pump render pass.
 func TriggerCallback(id string) string {
-	core.TriggerCallback(id)
-	return mgr.RenderAgain()
+	return mgr.DispatchCallback(id)
 }
 
 // TriggerTextCallback dispatches a string-carrying event (e.g. input change).
 func TriggerTextCallback(id string, value string) string {
-	core.TriggerTextCallback(id, value)
-	return mgr.RenderAgain()
+	return mgr.DispatchTextCallback(id, value)
 }
 
 // TriggerBoolCallback dispatches a bool-carrying event (e.g. checkbox toggle).
 func TriggerBoolCallback(id string, value bool) string {
-	core.TriggerBoolCallback(id, value)
-	return mgr.RenderAgain()
+	return mgr.DispatchBoolCallback(id, value)
 }
 
 // TriggerIntCallback dispatches an int-carrying event (e.g. tab selection).
 func TriggerIntCallback(id string, value int) string {
-	core.TriggerIntCallback(id, value)
-	return mgr.RenderAgain()
+	return mgr.DispatchIntCallback(id, value)
 }
 
 // listenerAdapter bridges the locally declared interface onto the render

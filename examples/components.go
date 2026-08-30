@@ -26,12 +26,10 @@ func main() {
 	fullRender := manager.RenderInitial()
 	fmt.Println(fullRender)
 
-	// Simulando evento de input
+	// Simulando evento de input — o dispatch via manager já devolve os patches
 	fmt.Println("✏️ Simulando input...")
-	core.TriggerTextCallback("txt_cb_0", "Ismael")
+	patches := manager.DispatchTextCallback("txt_cb_0", "Ismael")
 
-	// Re-render com patches
 	fmt.Println("🔁 Re-render com patches:")
-	patches := manager.RenderAgain()
 	fmt.Println(patches)
 }

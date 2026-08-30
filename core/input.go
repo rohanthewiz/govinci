@@ -13,7 +13,7 @@ func Input(value string, placeholder string, onChange func(string), styleProps .
 			sp.Apply(style)
 		}
 
-		id := registerTextCallback(onChange)
+		id := ctx.registerTextCallback(onChange)
 
 		return &Node{
 			Type: "Input",
@@ -35,7 +35,7 @@ func Checkbox(checked bool, onToggle func(bool), styleProps ...StyleProp) View {
 			sp.Apply(style)
 		}
 
-		id := registerBoolCallback(onToggle)
+		id := ctx.registerBoolCallback(onToggle)
 
 		return &Node{
 			Type: "Checkbox",
@@ -56,7 +56,7 @@ func InputPassword(value string, placeholder string, onChange func(string), styl
 			sp.Apply(style)
 		}
 
-		id := registerTextCallback(onChange)
+		id := ctx.registerTextCallback(onChange)
 
 		return &Node{
 			Type: "InputPassword",
@@ -78,7 +78,7 @@ func NumericInput(value int, onChange func(int), styleProps ...StyleProp) View {
 			sp.Apply(style)
 		}
 
-		id := registerTextCallback(func(val string) {
+		id := ctx.registerTextCallback(func(val string) {
 			if n, err := strconv.Atoi(val); err == nil {
 				onChange(n)
 			}
@@ -103,7 +103,7 @@ func TextArea(value string, onChange func(string), rows int, styleProps ...Style
 			sp.Apply(style)
 		}
 
-		id := registerTextCallback(onChange)
+		id := ctx.registerTextCallback(onChange)
 
 		return &Node{
 			Type: "TextArea",

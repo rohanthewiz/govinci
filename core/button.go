@@ -12,7 +12,7 @@ func Button(label string, onClick func(), styleProps ...StyleProp) View {
 			Type: "Button",
 			Props: map[string]any{
 				"label":   label,
-				"onClick": registerCallback(onClick),
+				"onClick": ctx.registerCallback(onClick),
 			},
 			Style: style,
 		}
@@ -30,7 +30,7 @@ func ButtonWithEvent(label string, event string, handler func(), styleProps ...S
 		props := map[string]any{
 			"label": label,
 		}
-		props["on"+event] = registerCallback(handler)
+		props["on"+event] = ctx.registerCallback(handler)
 
 		return &Node{
 			Type:  "Button",

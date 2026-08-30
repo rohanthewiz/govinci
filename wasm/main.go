@@ -76,7 +76,9 @@ func receiveEvent(this js.Value, args []js.Value) any {
 		return nil
 	}
 
-	core.ReceiveEventPayload(map[string]any{
+	// Dispatch through the app's own context: the callback registry is
+	// per-context-tree state now, not a package global.
+	ctx.ReceiveEventPayload(map[string]any{
 		"callback": id,
 		"value":    payload["value"],
 	})

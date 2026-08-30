@@ -110,7 +110,7 @@ func Column(stylePropsAndChildren ...PropsAndChildren) View {
 			case View:
 				children = append(children, v)
 			case BehaviorProp:
-				v.Apply(&Node{Props: props})
+				v.Apply(ctx, &Node{Props: props})
 			}
 		}
 

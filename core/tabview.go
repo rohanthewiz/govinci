@@ -38,7 +38,7 @@ func TabView(props ...TabViewProp) View {
 			"tabs":          tabs,
 		}
 		if node.OnTabChange != nil {
-			propMap["onTabChange"] = registerIntCallback(node.OnTabChange)
+			propMap["onTabChange"] = ctx.registerIntCallback(node.OnTabChange)
 		}
 
 		return &Node{

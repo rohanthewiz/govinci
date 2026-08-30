@@ -5,18 +5,24 @@ import (
 )
 
 type Context struct {
-	slots           []any
-	Cursor          int
-	theme           *Theme
-	config          *AppConfig
-	idGen           int
-	lock            sync.Mutex
-	renderManager   *RenderManager
-	callbackMap     map[string]any // Stable ID to callback
-	callbackCounter *int
-	usedCallbacks   map[string]bool
-	dirty           bool
-	parent          *Context
+	slots  []any
+	Cursor int
+	theme  *Theme
+	config *AppConfig
+	idGen  int
+	lock   sync.Mutex
+	dirty  bool
+	parent *Context
+
+	// The three pointers below are the app-instance state that every context
+	// derived from one NewContext root shares: derived contexts (children,
+	// scopes, WithTheme/WithConfig copies) copy the pointers, so there is
+	// exactly one of each per app. They used to be package-level globals,
+	// which made two apps in one process (or two managers in one test binary)
+	// share render notifications, callback IDs, and a navigation stack.
+	renderManager *RenderManager
+	registry      *callbackRegistry
+	nav           *navigatorState
 
 	children       []*Context
 	childrenCursor int
@@ -51,27 +57,26 @@ type AppConfig struct {
 }
 
 func NewContext() *Context {
-	cc := 0
 	return &Context{
-		slots:           make([]any, 0),
-		Cursor:          0,
-		renderManager:   NewRenderManager(),
-		callbackMap:     make(map[string]any),
-		callbackCounter: &cc,
-		scopes:          make(map[string]*Context),
+		slots:         make([]any, 0),
+		Cursor:        0,
+		renderManager: NewRenderManager(),
+		registry:      newCallbackRegistry(),
+		nav:           newNavigatorState(),
+		scopes:        make(map[string]*Context),
 	}
 }
 func (ctx *Context) NewChildContext() *Context {
 	return &Context{
-		slots:           make([]any, 0),
-		Cursor:          0,
-		theme:           ctx.theme,
-		config:          ctx.config,
-		renderManager:   ctx.renderManager,
-		callbackMap:     ctx.callbackMap,
-		callbackCounter: ctx.callbackCounter,
-		parent:          ctx,
-		scopes:          make(map[string]*Context),
+		slots:         make([]any, 0),
+		Cursor:        0,
+		theme:         ctx.theme,
+		config:        ctx.config,
+		renderManager: ctx.renderManager,
+		registry:      ctx.registry,
+		nav:           ctx.nav,
+		parent:        ctx,
+		scopes:        make(map[string]*Context),
 	}
 }
 func UseChildContext(ctx *Context) *Context {
@@ -117,25 +122,25 @@ func (ctx *Context) Config() *AppConfig {
 
 func (ctx *Context) WithConfig(cfg *AppConfig) *Context {
 	return &Context{
-		slots:           ctx.slots,
-		Cursor:          ctx.Cursor,
-		theme:           ctx.theme,
-		config:          cfg,
-		renderManager:   ctx.renderManager,
-		callbackMap:     ctx.callbackMap,
-		callbackCounter: ctx.callbackCounter,
+		slots:         ctx.slots,
+		Cursor:        ctx.Cursor,
+		theme:         ctx.theme,
+		config:        cfg,
+		renderManager: ctx.renderManager,
+		registry:      ctx.registry,
+		nav:           ctx.nav,
 	}
 }
 
 func (ctx *Context) WithTheme(theme *Theme) *Context {
 	return &Context{
-		slots:           ctx.slots,
-		Cursor:          ctx.Cursor,
-		theme:           theme,
-		config:          ctx.config,
-		renderManager:   ctx.renderManager,
-		callbackMap:     ctx.callbackMap,
-		callbackCounter: ctx.callbackCounter,
+		slots:         ctx.slots,
+		Cursor:        ctx.Cursor,
+		theme:         theme,
+		config:        ctx.config,
+		renderManager: ctx.renderManager,
+		registry:      ctx.registry,
+		nav:           ctx.nav,
 	}
 }
 
@@ -205,7 +210,6 @@ func WithConfigOpt(c *AppConfig) func(*Context) {
 
 func (ctx *Context) Reset() {
 	ctx.Cursor = 0
-	ctx.usedCallbacks = make(map[string]bool)
 	for _, child := range ctx.children {
 		child.Reset()
 	}

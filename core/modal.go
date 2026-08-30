@@ -30,7 +30,7 @@ func Modal(props ...ModalProp) View {
 		}
 
 		if node.OnDismiss != nil {
-			propMap["onDismiss"] = registerCallback(node.OnDismiss)
+			propMap["onDismiss"] = ctx.registerCallback(node.OnDismiss)
 		}
 
 		return &Node{

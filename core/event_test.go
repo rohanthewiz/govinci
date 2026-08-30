@@ -2,39 +2,43 @@ package core
 
 import "testing"
 
-// The callback registry is package-global, so every test establishes its own
-// pass boundary with BeginRenderPass before registering anything.
+// Each test builds its own context: the callback registry is per-context-tree
+// state, so tests are isolated by construction (which is itself one of the
+// behaviors under test — see TestContextsHaveIsolatedRegistries).
 
 func TestCallbackIDsStableAcrossRenderPasses(t *testing.T) {
-	BeginRenderPass()
-	first := registerCallback(func() {})
-	second := registerTextCallback(func(string) {})
-	third := registerBoolCallback(func(bool) {})
+	ctx := NewContext()
+
+	ctx.BeginRenderPass()
+	first := ctx.registerCallback(func() {})
+	second := ctx.registerTextCallback(func(string) {})
+	third := ctx.registerBoolCallback(func(bool) {})
 
 	// Simulate the next render of the same UI: same registration order must
 	// reproduce the same IDs, otherwise every interactive node's props would
 	// differ between renders and the reconciler would patch all of them.
-	BeginRenderPass()
-	if got := registerCallback(func() {}); got != first {
+	ctx.BeginRenderPass()
+	if got := ctx.registerCallback(func() {}); got != first {
 		t.Errorf("plain callback ID changed across passes: %q then %q", first, got)
 	}
-	if got := registerTextCallback(func(string) {}); got != second {
+	if got := ctx.registerTextCallback(func(string) {}); got != second {
 		t.Errorf("text callback ID changed across passes: %q then %q", second, got)
 	}
-	if got := registerBoolCallback(func(bool) {}); got != third {
+	if got := ctx.registerBoolCallback(func(bool) {}); got != third {
 		t.Errorf("bool callback ID changed across passes: %q then %q", third, got)
 	}
 }
 
 func TestCallbackKindsUseDistinctIDSpaces(t *testing.T) {
-	// Each kind counts independently; IDs must never collide across the three
-	// registries since TriggerCallback/TriggerTextCallback/TriggerBoolCallback
-	// look up in separate maps keyed by these strings.
-	BeginRenderPass()
+	// Each kind counts independently; IDs must never collide across the
+	// registries since the Trigger* methods look up in separate maps keyed by
+	// these strings.
+	ctx := NewContext()
+	ctx.BeginRenderPass()
 	ids := map[string]bool{
-		registerCallback(func() {}):           true,
-		registerTextCallback(func(string) {}): true,
-		registerBoolCallback(func(bool) {}):   true,
+		ctx.registerCallback(func() {}):           true,
+		ctx.registerTextCallback(func(string) {}): true,
+		ctx.registerBoolCallback(func(bool) {}):   true,
 	}
 	if len(ids) != 3 {
 		t.Errorf("expected 3 distinct IDs across kinds, got %v", ids)
@@ -46,16 +50,17 @@ func TestReRegistrationRunsLatestClosure(t *testing.T) {
 	// the most recent render captures the current state slots, so a stable ID
 	// must always dispatch to the newest registration.
 	var ran string
+	ctx := NewContext()
 
-	BeginRenderPass()
-	id := registerCallback(func() { ran = "stale" })
+	ctx.BeginRenderPass()
+	id := ctx.registerCallback(func() { ran = "stale" })
 
-	BeginRenderPass()
-	if id2 := registerCallback(func() { ran = "fresh" }); id2 != id {
+	ctx.BeginRenderPass()
+	if id2 := ctx.registerCallback(func() { ran = "fresh" }); id2 != id {
 		t.Fatalf("expected re-registration at same position to reuse %q, got %q", id, id2)
 	}
 
-	TriggerCallback(id)
+	ctx.TriggerCallback(id)
 	if ran != "fresh" {
 		t.Errorf("triggered closure = %q, want the latest registration", ran)
 	}
@@ -66,19 +71,20 @@ func TestPurgeDropsCallbacksNotReRegistered(t *testing.T) {
 	// orphaned tail ID must be gone so a late event against it is a no-op
 	// instead of firing a handler for a node that no longer exists.
 	staleRan := false
+	ctx := NewContext()
 
-	BeginRenderPass()
-	keep := registerCallback(func() {})
-	stale := registerCallback(func() { staleRan = true })
+	ctx.BeginRenderPass()
+	keep := ctx.registerCallback(func() {})
+	stale := ctx.registerCallback(func() { staleRan = true })
 
-	BeginRenderPass()
-	registerCallback(func() {})
-	PurgeUnusedCallbacks()
+	ctx.BeginRenderPass()
+	ctx.registerCallback(func() {})
+	ctx.PurgeUnusedCallbacks()
 
-	callbackMux.Lock()
-	_, staleExists := callbacks[stale]
-	_, keepExists := callbacks[keep]
-	callbackMux.Unlock()
+	ctx.registry.mu.Lock()
+	_, staleExists := ctx.registry.voidCBs[stale]
+	_, keepExists := ctx.registry.voidCBs[keep]
+	ctx.registry.mu.Unlock()
 
 	if staleExists {
 		t.Errorf("callback %q should have been purged after not re-registering", stale)
@@ -87,7 +93,7 @@ func TestPurgeDropsCallbacksNotReRegistered(t *testing.T) {
 		t.Errorf("callback %q was re-registered this pass and must survive the purge", keep)
 	}
 
-	TriggerCallback(stale) // must be a silent no-op
+	ctx.TriggerCallback(stale) // must be a silent no-op
 	if staleRan {
 		t.Errorf("purged callback still executed")
 	}
@@ -98,25 +104,128 @@ func TestIntCallbackIDsStableAndPurged(t *testing.T) {
 	// registry with a never-resetting counter, so their IDs churned every
 	// render and stale entries accumulated forever. This locks in their
 	// membership in the render-pass system alongside the other three kinds.
-	BeginRenderPass()
-	first := registerIntCallback(func(int) {})
+	ctx := NewContext()
+	ctx.BeginRenderPass()
+	first := ctx.registerIntCallback(func(int) {})
 
-	BeginRenderPass()
+	ctx.BeginRenderPass()
 	got := 0
-	if id := registerIntCallback(func(v int) { got = v }); id != first {
+	if id := ctx.registerIntCallback(func(v int) { got = v }); id != first {
 		t.Errorf("int callback ID changed across passes: %q then %q", first, id)
 	}
 
-	TriggerIntCallback(first, 3)
+	ctx.TriggerIntCallback(first, 3)
 	if got != 3 {
 		t.Errorf("TriggerIntCallback delivered %d, want 3", got)
 	}
 
 	// A pass that does not re-register the callback must purge it.
-	BeginRenderPass()
-	PurgeUnusedCallbacks()
-	TriggerIntCallback(first, 9) // must be a silent no-op
+	ctx.BeginRenderPass()
+	ctx.PurgeUnusedCallbacks()
+	ctx.TriggerIntCallback(first, 9) // must be a silent no-op
 	if got != 3 {
 		t.Errorf("purged int callback still executed (got %d)", got)
+	}
+}
+
+func TestContextsHaveIsolatedRegistries(t *testing.T) {
+	// The consolidation guarantee: two apps (two NewContext roots) in one
+	// process share nothing. Identical registration order yields identical ID
+	// strings in both — and each ID must dispatch only its own app's handler.
+	ctxA, ctxB := NewContext(), NewContext()
+
+	var ranA, ranB bool
+	ctxA.BeginRenderPass()
+	idA := ctxA.registerCallback(func() { ranA = true })
+	ctxB.BeginRenderPass()
+	idB := ctxB.registerCallback(func() { ranB = true })
+
+	if idA != idB {
+		t.Fatalf("independent apps should mint the same pass-sequenced IDs, got %q and %q", idA, idB)
+	}
+
+	ctxA.TriggerCallback(idA)
+	if !ranA || ranB {
+		t.Errorf("dispatch crossed context boundaries: ranA=%v ranB=%v", ranA, ranB)
+	}
+
+	// One app's purge must not evict the other's live handlers.
+	ctxA.BeginRenderPass()
+	ctxA.PurgeUnusedCallbacks()
+	ctxB.TriggerCallback(idB)
+	if !ranB {
+		t.Errorf("context A's purge removed context B's callback")
+	}
+}
+
+func TestDerivedContextsShareOneRegistry(t *testing.T) {
+	// Child and With* contexts must all write into the root's registry: a
+	// handler registered while rendering inside a scoped/themed subtree is
+	// dispatched by ID at the app level, with no knowledge of which subtree
+	// registered it.
+	root := NewContext()
+	root.BeginRenderPass()
+
+	ran := ""
+	id1 := root.Scope("tab-0").registerCallback(func() { ran = "scoped" })
+	id2 := root.WithTheme(DefaultTheme).registerCallback(func() { ran = "themed" })
+
+	root.TriggerCallback(id1)
+	if ran != "scoped" {
+		t.Errorf("scoped child's callback not reachable from root, ran=%q", ran)
+	}
+	root.TriggerCallback(id2)
+	if ran != "themed" {
+		t.Errorf("WithTheme copy's callback not reachable from root, ran=%q", ran)
+	}
+}
+
+func TestNestedDispatchDoesNotDeadlock(t *testing.T) {
+	// A handler that itself dispatches another callback (programmatic
+	// "click"). The registry must invoke handlers outside its lock or this
+	// deadlocks — the old package-global implementation did.
+	ctx := NewContext()
+	ctx.BeginRenderPass()
+
+	innerRan := false
+	inner := ctx.registerCallback(func() { innerRan = true })
+	outer := ctx.registerCallback(func() { ctx.TriggerCallback(inner) })
+
+	ctx.TriggerCallback(outer)
+	if !innerRan {
+		t.Errorf("nested dispatch did not run the inner handler")
+	}
+}
+
+func TestNavigationStackIsPerContext(t *testing.T) {
+	// The navigator stack moved off a package global for the same isolation
+	// reason as the registry: pushing a route in one app must not navigate
+	// another. Screens render distinct text so the rendered tree identifies
+	// which route is on top.
+	screen := func(name string) func(*Context) View {
+		return func(ctx *Context) View { return Text(name) }
+	}
+
+	ctxA, ctxB := NewContext(), NewContext()
+	appA := Navigator(screen("home-A"))
+	appB := Navigator(screen("home-B"))
+
+	// Mount both apps, then navigate only app A. Navigator renders the top
+	// route directly (no wrapper node), so the returned node IS the screen's
+	// Text node.
+	Render(ctxA, appA)
+	Render(ctxB, appB)
+	Push(ctxA, screen("details-A"))
+
+	if got := Render(ctxA, appA).Props["content"]; got != "details-A" {
+		t.Errorf("app A should show its pushed route, got %v", got)
+	}
+	if got := Render(ctxB, appB).Props["content"]; got != "home-B" {
+		t.Errorf("app B was navigated by app A's Push, got %v", got)
+	}
+
+	Pop(ctxA)
+	if got := Render(ctxA, appA).Props["content"]; got != "home-A" {
+		t.Errorf("app A should be back at its root after Pop, got %v", got)
 	}
 }

@@ -1,20 +1,24 @@
 package core
 
+// BehaviorProp attaches event behavior to a node. Apply takes the rendering
+// Context (unlike StyleProp) because registering the handler needs the
+// context's callback registry — the registry is per-app state on the context
+// tree, not a package global.
 type BehaviorProp interface {
-	Apply(*Node)
+	Apply(*Context, *Node)
 }
 
-type behaviorFunc func(*Node)
+type behaviorFunc func(*Context, *Node)
 
-func (f behaviorFunc) Apply(n *Node) {
-	f(n)
+func (f behaviorFunc) Apply(ctx *Context, n *Node) {
+	f(ctx, n)
 }
 func On(event string, handler func()) BehaviorProp {
-	return behaviorFunc(func(n *Node) {
+	return behaviorFunc(func(ctx *Context, n *Node) {
 		if n.Props == nil {
 			n.Props = map[string]any{}
 		}
-		n.Props["on"+event] = registerCallback(handler)
+		n.Props["on"+event] = ctx.registerCallback(handler)
 	})
 }
 

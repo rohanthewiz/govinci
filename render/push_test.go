@@ -43,7 +43,8 @@ func awaitPush(t *testing.T, l *chanListener, timeout time.Duration, pred func(s
 }
 
 func TestStateChangePushesToListener(t *testing.T) {
-	m := render.New(core.NewContext(), counterApp)
+	ctx := core.NewContext()
+	m := render.New(ctx, counterApp)
 	defer m.Close()
 
 	tree := decodeTree(t, m.RenderInitial())
@@ -52,10 +53,11 @@ func TestStateChangePushesToListener(t *testing.T) {
 	l := newChanListener()
 	m.SetListener(l)
 
-	// The event is dispatched WITHOUT the native side calling RenderAgain —
-	// exactly the shape of an async state change. The push channel alone must
-	// carry the update out.
-	core.TriggerCallback(onClick)
+	// The event is dispatched WITHOUT the native side rendering — exactly the
+	// shape of an async state change (hence ctx.TriggerCallback, not
+	// m.DispatchCallback, which folds in a render whose diff would consume
+	// the change). The push channel alone must carry the update out.
+	ctx.TriggerCallback(onClick)
 
 	payload := awaitPush(t, l, 2*time.Second, func(p string) bool {
 		return strings.Contains(p, "count: 1")
@@ -70,7 +72,8 @@ func TestStateChangePushesToListener(t *testing.T) {
 }
 
 func TestRapidStateChangesCoalesce(t *testing.T) {
-	m := render.New(core.NewContext(), counterApp)
+	ctx := core.NewContext()
+	m := render.New(ctx, counterApp)
 	defer m.Close()
 
 	tree := decodeTree(t, m.RenderInitial())
@@ -81,7 +84,7 @@ func TestRapidStateChangesCoalesce(t *testing.T) {
 
 	const clicks = 5
 	for range clicks {
-		core.TriggerCallback(onClick)
+		ctx.TriggerCallback(onClick)
 	}
 
 	// The final state must arrive; the buffered-by-one request channel means
@@ -101,13 +104,14 @@ func TestNoListenerLeavesPollingFlowIntact(t *testing.T) {
 	// Regression guard for the pump/polling interaction: with no listener the
 	// pump must NOT consume the diff, or a polling runtime (WASM today) would
 	// call RenderAgain itself and get "[]" while the screen is stale.
-	m := render.New(core.NewContext(), counterApp)
+	ctx := core.NewContext()
+	m := render.New(ctx, counterApp)
 	defer m.Close()
 
 	tree := decodeTree(t, m.RenderInitial())
 	onClick := tree.Children[1].Props["onClick"].(string)
 
-	core.TriggerCallback(onClick)
+	ctx.TriggerCallback(onClick)
 	// Give the pump a chance to (incorrectly) swallow the change.
 	time.Sleep(50 * time.Millisecond)
 
@@ -120,13 +124,14 @@ func TestNoListenerLeavesPollingFlowIntact(t *testing.T) {
 func TestListenerAttachedLateReceivesPendingChange(t *testing.T) {
 	// A state change that happens before the native side attaches must be
 	// flushed on attachment (SetListener re-nudges the pump).
-	m := render.New(core.NewContext(), counterApp)
+	ctx := core.NewContext()
+	m := render.New(ctx, counterApp)
 	defer m.Close()
 
 	tree := decodeTree(t, m.RenderInitial())
 	onClick := tree.Children[1].Props["onClick"].(string)
 
-	core.TriggerCallback(onClick)
+	ctx.TriggerCallback(onClick)
 
 	l := newChanListener()
 	m.SetListener(l)
@@ -159,6 +164,67 @@ func TestIntervalTickPushesWithoutAnyNativeEvent(t *testing.T) {
 
 	awaitPush(t, l, 2*time.Second, func(p string) bool {
 		return strings.Contains(p, "update-props") && strings.Contains(p, "count:")
+	})
+}
+
+func TestConcurrentDispatchAndTimerPushesDoNotRace(t *testing.T) {
+	// The gap-4 marshaling guarantee: native-event dispatch (DispatchCallback)
+	// and pump renders driven by timer ticks contend on the same render mutex,
+	// so handlers never interleave with a render pass. Several goroutines
+	// hammer the event path while an interval mutates state from its own
+	// goroutine; -race is the assertion, plus every dispatch must return
+	// decodable patch JSON.
+	tickerCounterApp := func(ctx *core.Context) core.View {
+		return core.ComponentFunc(func(ctx *core.Context) *core.Node {
+			clicks := core.NewState(ctx, 0)
+			ticks := core.NewState(ctx, 0)
+			hooks.UseInterval(ctx, func() {
+				ticks.Set(ticks.Get() + 1)
+			}, 5*time.Millisecond)
+			return core.Column(
+				core.Text(fmt.Sprintf("clicks: %d ticks: %d", clicks.Get(), ticks.Get())),
+				core.Button("increment", func() {
+					clicks.Set(clicks.Get() + 1)
+				}),
+			).Render(ctx)
+		})
+	}
+
+	defer hooks.ClearIntervals()
+
+	m := render.New(core.NewContext(), tickerCounterApp)
+	defer m.Close()
+
+	tree := decodeTree(t, m.RenderInitial())
+	onClick := tree.Children[1].Props["onClick"].(string)
+
+	l := newChanListener()
+	m.SetListener(l)
+
+	const dispatchers, clicksEach = 3, 20
+	var wg sync.WaitGroup
+	for range dispatchers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range clicksEach {
+				// t.Error (not the Fatal-based decode helper) — Fatal must
+				// not be called off the test goroutine.
+				var p []jsonPatch
+				if out := m.DispatchCallback(onClick); json.Unmarshal([]byte(out), &p) != nil {
+					t.Errorf("dispatch returned non-patch JSON: %s", out)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// All clicks were dispatched serially under the render mutex, so the
+	// final total must eventually surface — on the dispatch return path or
+	// via a timer-driven push, either of which renders the settled state.
+	want := fmt.Sprintf("clicks: %d", dispatchers*clicksEach)
+	awaitPush(t, l, 2*time.Second, func(p string) bool {
+		return strings.Contains(p, want)
 	})
 }
 
