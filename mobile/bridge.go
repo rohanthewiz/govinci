@@ -38,6 +38,28 @@ type PatchListener interface {
 
 var mgr *render.Manager
 
+// dataDir is the app's writable directory, provided by the native shell.
+// Go code cannot discover this itself: on iOS and Android the writable
+// sandbox path is an OS-level fact only the shell knows (Documents on iOS,
+// Context.filesDir on Android), and there is no portable env var for it.
+var dataDir string
+
+// SetDataDir records the app's writable directory for Go-side persistence
+// (see examples/todoapp's bytdb store). The shell must call it before
+// RenderInitial so the first render can already read persisted state; the
+// bound app package's init runs earlier still, which is why apps open their
+// stores lazily on first render rather than in init. Left unset, DataDir
+// returns "" and persistence-aware apps run in-memory — the right behavior
+// for the web preview targets and for tests that don't care about storage.
+func SetDataDir(path string) {
+	dataDir = path
+}
+
+// DataDir returns the writable directory the shell registered, or "" if none.
+func DataDir() string {
+	return dataDir
+}
+
 // Register installs the app's root view and context. It must be called from
 // Go (typically the bound app package's init) before the native shell invokes
 // any other function here. Calling it again replaces the app — the previous

@@ -2,11 +2,29 @@ package todoapp
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/GraHms/govinci/core"
 	"github.com/GraHms/govinci/mobile"
 )
+
+// TestMain gives the whole suite a data directory before the first render,
+// mirroring the shells (which call SetDataDir before RenderInitial). That
+// routes every mutation in TestTodoLifecycle through the bytdb write-through
+// path too, instead of leaving persistence to its dedicated test alone.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "todoapp-test-")
+	if err != nil {
+		panic(err)
+	}
+	mobile.SetDataDir(dir)
+	code := m.Run()
+	closeStore() // release the file lock before removing the directory
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 // The package init has already run mobile.Register by the time tests execute,
 // so these tests exercise exactly the call sequence the native shells make:
@@ -194,5 +212,83 @@ func TestTodoLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(patches, "1 item left") {
 		t.Errorf("submit patches don't update the count:\n%s", patches)
+	}
+}
+
+// relaunch simulates the app process being killed and started again: close
+// the store (drop the file lock and the in-memory snapshot) and register a
+// fresh context, so the next render hydrates from disk exactly as a cold
+// start would. The data directory carries over — that's the disk.
+func relaunch(t *testing.T) {
+	t.Helper()
+	closeStore()
+	mobile.Register(core.NewContext(), App)
+}
+
+func TestTodoPersistence(t *testing.T) {
+	// A fresh directory isolates this test from whatever TestTodoLifecycle
+	// left in the TestMain-wide store; openStore notices the changed path
+	// and reopens there. The fresh Register drops the previous test's
+	// in-memory state for the same reason.
+	mobile.SetDataDir(t.TempDir())
+	mobile.Register(core.NewContext(), App)
+
+	if tree := mobile.RenderInitial(); !strings.Contains(tree, "No tasks yet") {
+		t.Fatalf("fresh store isn't empty:\n%s", tree)
+	}
+
+	addTodo(t, "First task")
+	addTodo(t, "Second task")
+	mobile.TriggerBoolCallback(
+		mustCallback(t, byType("Checkbox"), "onToggle", "Checkbox"), true)
+
+	// Relaunch #1: both rows, the done flag, and the derived count must all
+	// come back from disk, not from the (discarded) context state.
+	relaunch(t)
+	tree := mobile.RenderInitial()
+	for _, want := range []string{"First task", "Second task", "1 item left", "Clear completed"} {
+		if !strings.Contains(tree, want) {
+			t.Errorf("relaunched tree missing %q:\n%s", want, tree)
+		}
+	}
+
+	// The ID sequence must resume past persisted rows. If it restarted at 1,
+	// the next add would collide with "First task", and deleting the first
+	// row (the first ✕ in the tree, list is id-ordered) would take the new
+	// row with it.
+	addTodo(t, "Third task")
+	mobile.TriggerCallback(mustCallback(t, buttonLabeled("✕"), "onClick", `Button "✕"`))
+	tree = mobile.RenderInitial()
+	if strings.Contains(tree, "First task") {
+		t.Errorf("deleting the first row didn't remove First task:\n%s", tree)
+	}
+	if !strings.Contains(tree, "Third task") {
+		t.Errorf("post-relaunch add shares an ID with a persisted row (deleted with it):\n%s", tree)
+	}
+
+	// Relaunch #2: the delete and the new row survive. (The done row went
+	// with the delete, so nothing is completed at this point.)
+	relaunch(t)
+	tree = mobile.RenderInitial()
+	if strings.Contains(tree, "First task") {
+		t.Errorf("deleted row came back after relaunch:\n%s", tree)
+	}
+	if !strings.Contains(tree, "Third task") {
+		t.Errorf("row added after relaunch wasn't persisted:\n%s", tree)
+	}
+
+	// Bulk clear persists too: complete "Second task" (now the first row,
+	// hence the first checkbox), clear, and the clear must hold across a
+	// relaunch while the untouched row stays.
+	mobile.TriggerBoolCallback(
+		mustCallback(t, byType("Checkbox"), "onToggle", "Checkbox"), true)
+	mobile.TriggerCallback(mustCallback(t, buttonLabeled("Clear completed"), "onClick", `Button "Clear completed"`))
+	relaunch(t)
+	tree = mobile.RenderInitial()
+	if strings.Contains(tree, "Second task") {
+		t.Errorf("cleared row came back after relaunch:\n%s", tree)
+	}
+	if !strings.Contains(tree, "Third task") {
+		t.Errorf("clear-completed removed an active row from disk:\n%s", tree)
 	}
 }

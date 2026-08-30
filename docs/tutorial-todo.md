@@ -16,6 +16,7 @@ framework surface. Each feature maps to a concept:
 | The task list | Virtualized `List`, `For`, `Keyed`, reconciler semantics |
 | Filter chips | Derived state, style-driven selection, `Transition` |
 | Delete / clear buttons | Theme base styles and when to override them |
+| Todos survive relaunch | Persistence: an embedded bytdb database behind the mutation choke point |
 | Everything | Accessibility props, the mobile bridge, three levels of testing |
 
 ---
@@ -100,12 +101,19 @@ The app has four pieces of state, all declared at the top of the root:
 
 ```go
 func App(ctx *core.Context) core.View {
-	todos := core.NewState(ctx, []Todo{})
+	st := openStore()
+	storedTodos, storedNextID := st.snapshot()
+
+	todos := core.NewState(ctx, storedTodos)
 	draft := core.NewState(ctx, "")
 	filter := core.NewState(ctx, filterAll)
-	nextID := core.NewState(ctx, 1)
+	nextID := core.NewState(ctx, storedNextID)
 	...
 ```
+
+(`openStore` and `snapshot` belong to the persistence layer — section 5. For
+now, read them as "whatever was on disk, or an empty list": with no store the
+snapshot is `nil, 1` and the app behaves as if the two lines weren't there.)
 
 `NewState` is a hook in the React sense: state is stored in **positional
 slots** on the context, matched to call sites by the order in which they run.
@@ -137,6 +145,7 @@ Every write goes through a helper that builds a fresh slice:
 			}
 		}
 		todos.Set(next)
+		st.setDone(id, done)
 	}
 ```
 
@@ -400,7 +409,74 @@ test suite doubles as proof the accessibility wiring works.
 
 ---
 
-## 5. Testing at three levels
+## 5. Persistence: write-through to an embedded database
+
+Todos survive relaunch. The whole persistence layer is
+[`store.go`](../examples/todoapp/store.go) — a thin wrapper around
+[bytdb](https://github.com/rohanthewiz/bytdb), an embedded Postgres-dialect
+SQL database in pure Go. Pure Go is the point: the store compiles through
+gomobile like any other framework code — no cgo, no per-ABI SQLite binary,
+no server on the device — and the table is one line of DDL:
+
+```sql
+CREATE TABLE IF NOT EXISTS todos (id int PRIMARY KEY, title text, done boolean)
+```
+
+The integration reduces to three decisions.
+
+**The shell owns the path.** Go cannot discover where the app may write —
+the sandboxed data directory is an OS-level fact only the shell knows. So the
+bridge has one bind-safe registration call, `mobile.SetDataDir`, and each
+shell calls it before `renderInitial`:
+
+```swift
+// GomobileBridge.swift (iOS): Application Support, not Documents — a
+// database is app-managed data, not a user-visible document.
+let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+MobileSetDataDir(dir.path)
+```
+
+```kotlin
+// MainActivity.kt (Android): filesDir is the equivalent.
+val runtime = GovinciRuntime(GomobileBridge(filesDir.absolutePath))
+```
+
+With no directory registered — the web preview targets, plain `go test` —
+`openStore` returns nil, every store method is nil-receiver-safe, and the app
+runs in-memory exactly as it did before persistence existed. Storage is a
+capability the shell grants, not a requirement the app imposes.
+
+**Load synchronously, on the first render pass.** `hooks.UseEffect` exists,
+but effects run on their own goroutine: hydrating through one would mount an
+empty list and patch the rows in a frame later. Instead `App` opens the store
+inline — that is the `openStore()` / `snapshot()` pair from section 3 — so
+the persisted rows are already in the *initial* tree the shell mounts; there
+is no flash. `openStore` runs on every pass but only works once: after the
+first call it is a mutex acquire and a path compare, and `snapshot` hands
+back a copy of what was read at open. `nextID` seeds from `max(id)+1`, so
+row identities never collide across launches.
+
+**Write through the choke point.** Section 3 established that every mutation
+funnels through one helper; each helper now ends with a store call mirroring
+its slice operation (`st.add(created)`, `st.setDone(id, done)`,
+`st.remove(id)`, `st.clearDone()`). The write rides the event path
+synchronously: bytdb single-row writes are microseconds into an
+fsync-before-ack WAL, so a hard kill right after a tap loses nothing, and
+there is no dirty flag or debounce timer to get wrong. Order matters —
+memory first, disk second — and store errors are logged, not surfaced: the
+in-memory list already updated and stays authoritative for the running
+process; the worst case is one action missing after the next launch.
+
+Both ends of the test pyramid pin this. The bridge test
+(`TestTodoPersistence`) simulates relaunches headlessly — `closeStore()` plus
+a fresh `mobile.Register` forces the next render to hydrate from disk — and
+the XCUITest (`testTodosSurviveRelaunch`) kills and relaunches the real
+process around a real tap.
+
+---
+
+## 6. Testing at three levels
 
 ### Level 1: bridge tests in Go (seconds, no simulator)
 
@@ -474,7 +550,7 @@ the *renderer contract* — and each has caught real bugs the other cannot.
 
 ---
 
-## 6. Shipping it
+## 7. Shipping it
 
 Both build scripts take the app package as an optional argument (default:
 the `examples/mobileapp` demo).
@@ -505,7 +581,7 @@ platform and Jetpack Compose on the other.
 
 ---
 
-## 7. Where to go from here
+## 8. Where to go from here
 
 The todo app deliberately leaves framework surface unexplored:
 
@@ -518,8 +594,6 @@ The todo app deliberately leaves framework surface unexplored:
   boxes (`examples/mobileapp`'s feed tab).
 - **Theming** — a custom `core.Theme` injected with `WithThemeOpt`, and
   components reading tokens via `ctx.Theme()` (`examples/fintechapp`).
-- **Persistence** — the mutation helpers are the single write choke point;
-  flushing `todos` to disk from them is a contained change.
 
 For the internals referenced throughout: [`docs/reconciliation.md`](reconciliation.md)
 covers the diffing engine, and [`docs/ui-architecture.md`](ui-architecture.md)

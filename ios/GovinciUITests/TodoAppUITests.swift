@@ -20,12 +20,27 @@ final class TodoAppUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Deletes every persisted row so each test starts from a clean slate.
+    /// Necessary since the app began persisting (bytdb behind the mutation
+    /// helpers): rows now survive both relaunches and previous test runs.
+    /// Rows are found by their delete buttons' accessibility labels
+    /// ("Delete <title>") — the ✕ glyph itself is not the accessible name.
+    private func clearAllTodos(_ app: XCUIApplication) {
+        let deletes = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Delete '"))
+        while deletes.firstMatch.exists {
+            deletes.firstMatch.tap()
+        }
+        XCTAssertTrue(app.staticTexts["0 items left"].waitForExistence(timeout: 5),
+                      "clearing leftover todos did not settle")
+    }
+
     func testAddClearsFocusedInput() throws {
         let app = XCUIApplication()
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Todos"].waitForExistence(timeout: 10),
                       "initial tree did not render")
+        clearAllTodos(app)
 
         let field = app.textFields["What needs doing?"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
@@ -64,5 +79,43 @@ final class TodoAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["3 items left"].waitForExistence(timeout: 5),
                       "return-key submit did not round-trip")
         XCTAssertTrue(app.staticTexts["Feed cat"].waitForExistence(timeout: 5))
+    }
+
+    // The persistence path end to end on the real stack: the row must come
+    // back after the process is killed and relaunched — i.e. out of the bytdb
+    // file under Application Support (GomobileBridge registers the directory
+    // before the first render), not out of the previous process's memory.
+    func testTodosSurviveRelaunch() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Todos"].waitForExistence(timeout: 10),
+                      "initial tree did not render")
+        clearAllTodos(app)
+
+        let field = app.textFields["What needs doing?"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("Persist me\n")
+        XCTAssertTrue(app.staticTexts["1 item left"].waitForExistence(timeout: 5),
+                      "add did not round-trip")
+
+        // terminate() is a hard kill — no lifecycle hook runs on the Go side,
+        // so this only passes if the write-through already hit the WAL when
+        // the add's render pass returned.
+        app.terminate()
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Persist me"].waitForExistence(timeout: 10),
+                      "todo did not survive relaunch")
+        XCTAssertTrue(app.staticTexts["1 item left"].waitForExistence(timeout: 5),
+                      "count not restored from disk")
+
+        // Deleting after the relaunch proves the restored row carries a live
+        // identity (its ID round-tripped, not just its title), and leaves the
+        // store clean for the next run.
+        app.buttons["Delete Persist me"].tap()
+        XCTAssertTrue(app.staticTexts["0 items left"].waitForExistence(timeout: 5),
+                      "restored row could not be deleted")
     }
 }

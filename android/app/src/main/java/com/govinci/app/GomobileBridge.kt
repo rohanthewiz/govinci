@@ -16,7 +16,19 @@ import mobile.PatchListener
  * an init step (mobile.Register), which runs when the AAR's native library
  * loads, so by the time these calls happen the app is installed.
  */
-class GomobileBridge : GovinciBridge {
+/**
+ * @param dataDir the app's writable directory (Context.filesDir) — passed in
+ * because only an Android Context can name it, and this class deliberately
+ * holds no Context. Registered with Go before anything renders: Go-side
+ * persistence (mobile.SetDataDir / DataDir; see examples/todoapp's bytdb
+ * store) hydrates on the first render pass, so this must beat
+ * GovinciRuntime.start().
+ */
+class GomobileBridge(dataDir: String) : GovinciBridge {
+    init {
+        Mobile.setDataDir(dataDir)
+    }
+
     override fun renderInitial(): String = Mobile.renderInitial()
 
     override fun triggerCallback(id: String): String = Mobile.triggerCallback(id)

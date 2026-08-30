@@ -23,6 +23,19 @@ final class GomobileBridge: GovinciBridge, @unchecked Sendable {
     // the bridge's internal ref-counting.
     private let retained = Locked<Listener?>(nil)
 
+    init() {
+        // Register the writable directory before anything renders — Go-side
+        // persistence (mobile.SetDataDir / DataDir; see examples/todoapp's
+        // bytdb store) hydrates on the first render pass, so this must beat
+        // GovinciRuntime.start(). Application Support rather than Documents:
+        // a database is app-managed data, not a user-visible document, and
+        // unlike Documents the directory doesn't exist until created.
+        let fm = FileManager.default
+        let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        MobileSetDataDir(dir.path)
+    }
+
     func renderInitial() -> String { MobileRenderInitial() }
 
     func triggerCallback(_ id: String) -> String {

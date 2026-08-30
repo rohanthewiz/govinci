@@ -13,7 +13,7 @@ class MainActivity : ComponentActivity() {
         // channel; after that the composition tracks the TreeStore on its own.
         // Recreation (rotation, process restore) simply remounts from Go's
         // current state — the Go side is a process-wide singleton.
-        val runtime = GovinciRuntime(GomobileBridge())
+        val runtime = GovinciRuntime(GomobileBridge(filesDir.absolutePath))
         runtime.start()
         setContent { GovinciRoot(runtime) }
     }

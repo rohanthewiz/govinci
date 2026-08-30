@@ -5,9 +5,11 @@
 // the _test.go beside it drives the exact call sequence the native shells make
 // for instant feedback without a simulator.
 //
-// Data is held in memory for the life of the process. Persistence is out of
-// scope for the example; a real app would flush the todo slice to disk from
-// the mutation helpers below, which are the single choke point for writes.
+// Data persists across launches via an embedded bytdb database (store.go).
+// The mutation helpers below are the single choke point for writes, and each
+// one write-throughs to the store; the store's snapshot at open seeds the
+// initial state. With no data directory registered (mobile.SetDataDir — web
+// preview, bare tests) the store is nil and the app runs in-memory unchanged.
 package todoapp
 
 import (
@@ -66,26 +68,42 @@ const (
 // calls inside a list that grows, shrinks, or reorders would silently read
 // another row's slot. Rows below are therefore pure functions of their Todo.
 func App(ctx *core.Context) core.View {
-	todos := core.NewState(ctx, []Todo{})
+	// Lazy-open the persistent store (no-op nil when no data dir is set) and
+	// seed state from its snapshot, synchronously: the persisted rows are in
+	// the initial tree, where a hooks.UseEffect load (async by design) would
+	// mount empty and patch the rows in a frame later. NewState only consumes
+	// the initial value on the context's first pass, so the snapshot call is
+	// wasted work on re-renders — but it's a copy of an in-memory slice, not
+	// a query, and the store methods are cheap after open.
+	st := openStore()
+	storedTodos, storedNextID := st.snapshot()
+
+	todos := core.NewState(ctx, storedTodos)
 	draft := core.NewState(ctx, "")
 	filter := core.NewState(ctx, filterAll)
-	// Monotonic ID source. Indices can't serve as identities because deletion
-	// shifts them, which would break both row keys and toggle targets.
-	nextID := core.NewState(ctx, 1)
+	// Monotonic ID source, resumed from the store so IDs stay unique across
+	// launches. Indices can't serve as identities because deletion shifts
+	// them, which would break both row keys and toggle targets.
+	nextID := core.NewState(ctx, storedNextID)
 
 	// --- Mutations -------------------------------------------------------
 	// Every write goes through one of these helpers, and each builds a fresh
 	// slice before Set. Set marks the context dirty and requests a render, so
-	// the UI below never needs manual refresh plumbing.
+	// the UI below never needs manual refresh plumbing. Each helper also
+	// write-throughs to the store with the matching row operation — memory
+	// first (the UI must never wait on or be blocked by a disk error), disk
+	// second, no branching because the store methods are nil-safe.
 
 	addTodo := func() {
 		title := strings.TrimSpace(draft.Get())
 		if title == "" {
 			return // ignore blank submissions rather than surfacing an error state
 		}
-		todos.Set(append(append([]Todo{}, todos.Get()...), Todo{ID: nextID.Get(), Title: title}))
+		created := Todo{ID: nextID.Get(), Title: title}
+		todos.Set(append(append([]Todo{}, todos.Get()...), created))
 		nextID.Set(nextID.Get() + 1)
 		draft.Set("") // clear the input so consecutive adds need no manual erase
+		st.add(created)
 	}
 
 	setDone := func(id int, done bool) {
@@ -97,6 +115,7 @@ func App(ctx *core.Context) core.View {
 			}
 		}
 		todos.Set(next)
+		st.setDone(id, done)
 	}
 
 	removeTodo := func(id int) {
@@ -107,6 +126,7 @@ func App(ctx *core.Context) core.View {
 			}
 		}
 		todos.Set(next)
+		st.remove(id)
 	}
 
 	clearDone := func() {
@@ -117,6 +137,7 @@ func App(ctx *core.Context) core.View {
 			}
 		}
 		todos.Set(next)
+		st.clearDone()
 	}
 
 	// --- Derived values --------------------------------------------------
