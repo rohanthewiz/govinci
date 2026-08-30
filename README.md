@@ -191,6 +191,17 @@ core.ButtonWithEvent("Hold", "TouchStart", func() {
 
 ---
 
+## 📖 Tutorial
+
+New to Govinci? [Building a Todo App](docs/tutorial-todo.md) is an in-depth,
+start-to-finish walkthrough: state and the rules of hooks, controlled inputs
+with Enter-to-submit, the virtualized keyed `List`, theming pitfalls,
+accessibility, testing at three levels, and shipping the same Go code to the
+iOS simulator and Android emulator. The finished app is
+[`examples/todoapp`](examples/todoapp).
+
+---
+
 ## 📐 Architecture
 
 - `core/` – core abstractions: Node, View, Context, State, Style
