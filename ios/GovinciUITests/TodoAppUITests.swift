@@ -56,5 +56,13 @@ final class TodoAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["2 items left"].waitForExistence(timeout: 5),
                       "second add did not round-trip")
         XCTAssertTrue(app.staticTexts["Walk dog"].waitForExistence(timeout: 5))
+
+        // The return key is the second commit path: typing "\n" must add the
+        // row exactly like the Add button (InputWithSubmit's onSubmit).
+        field.tap()
+        field.typeText("Feed cat\n")
+        XCTAssertTrue(app.staticTexts["3 items left"].waitForExistence(timeout: 5),
+                      "return-key submit did not round-trip")
+        XCTAssertTrue(app.staticTexts["Feed cat"].waitForExistence(timeout: 5))
     }
 }

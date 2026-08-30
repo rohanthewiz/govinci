@@ -27,6 +27,33 @@ func Input(value string, placeholder string, onChange func(string), styleProps .
 	})
 }
 
+// InputWithSubmit is Input plus a submit action: pressing the keyboard's
+// return key (iOS) or IME done action (Android) dispatches onSubmit. The
+// submit rides the existing void-callback channel — the renderers read the
+// "onSubmit" prop and dispatch it exactly like a Button's onClick — so the
+// bridge surface is unchanged. A separate builder rather than a variadic
+// change to Input keeps every existing call site compiling untouched.
+func InputWithSubmit(value string, placeholder string, onChange func(string), onSubmit func(), styleProps ...StyleProp) View {
+	return ComponentFunc(func(ctx *Context) *Node {
+		base := ctx.Theme().Components.Input
+		style := &base
+		for _, sp := range styleProps {
+			sp.Apply(style)
+		}
+
+		return &Node{
+			Type: "Input",
+			Props: map[string]any{
+				"value":       value,
+				"placeholder": placeholder,
+				"onChange":    ctx.registerTextCallback(onChange),
+				"onSubmit":    ctx.registerCallback(onSubmit),
+			},
+			Style: style,
+		}
+	})
+}
+
 func Checkbox(checked bool, onToggle func(bool), styleProps ...StyleProp) View {
 	return ComponentFunc(func(ctx *Context) *Node {
 		base := ctx.Theme().Components.CheckBox

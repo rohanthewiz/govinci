@@ -455,6 +455,7 @@ private struct GovinciTextField: View {
     var body: some View {
         let upstream = node.stringProp("value")
         let onChange = node.stringProp("onChange")
+        let onSubmit = node.stringProp("onSubmit")
         let prompt = Text(node.stringProp("placeholder"))
 
         // While focused the local buffer is authoritative; otherwise render
@@ -473,6 +474,11 @@ private struct GovinciTextField: View {
 
         field(value: value, prompt: prompt)
             .focused($focused)
+            // The return key dispatches onSubmit as a plain void event — the
+            // same channel as a Button tap — and advertises itself as "done"
+            // so the keyboard reflects that the field acts on return.
+            .submitLabel(onSubmit.isEmpty ? .return : .done)
+            .onSubmit { if !onSubmit.isEmpty { runtime?.click(onSubmit) } }
             .onChange(of: focused) { _, isFocused in
                 if isFocused {
                     text = node.stringProp("value")

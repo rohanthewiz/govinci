@@ -174,11 +174,13 @@ func App(ctx *core.Context) core.View {
 			})),
 
 			// Entry row. The Input is fully controlled (value in, onChange
-			// out); there is no submit/enter event in the bridge, so the Add
-			// button is the sole commit path.
+			// out); the keyboard's return/done key and the Add button are
+			// two paths to the same commit.
 			core.Row(
 				core.Gap(8),
-				core.Input(draft.Get(), "What needs doing?", func(v string) { draft.Set(v) },
+				core.InputWithSubmit(draft.Get(), "What needs doing?",
+					func(v string) { draft.Set(v) },
+					addTodo,
 					core.FlexGrow(1),
 				),
 				core.Button("Add", addTodo,

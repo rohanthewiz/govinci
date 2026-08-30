@@ -180,4 +180,19 @@ func TestTodoLifecycle(t *testing.T) {
 	if !strings.Contains(tree, "No tasks yet") {
 		t.Errorf("emptied list doesn't show the empty state:\n%s", tree)
 	}
+
+	// Submit path: the input's onSubmit is a void callback carrying the same
+	// commit as the Add button, so typing then dispatching it must create the
+	// row and clear the draft without the button being involved.
+	mobile.TriggerTextCallback(mustCallback(t, byType("Input"), "onChange", "Input"), "Via enter")
+	patches = mobile.TriggerCallback(mustCallback(t, byType("Input"), "onSubmit", "Input onSubmit"))
+	if !strings.Contains(patches, "Via enter") {
+		t.Errorf("submit patches don't contain the new row:\n%s", patches)
+	}
+	if !strings.Contains(patches, `"value":""`) {
+		t.Errorf("submit patches don't clear the draft:\n%s", patches)
+	}
+	if !strings.Contains(patches, "1 item left") {
+		t.Errorf("submit patches don't update the count:\n%s", patches)
+	}
 }

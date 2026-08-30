@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -45,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -315,6 +317,7 @@ private fun GovinciTextField(
     val s = node.style
     val upstream = node.stringProp("value")
     val onChange = node.stringProp("onChange")
+    val onSubmit = node.stringProp("onSubmit")
 
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusedAsState()
@@ -369,6 +372,14 @@ private fun GovinciTextField(
                 password -> KeyboardType.Password
                 else -> KeyboardType.Text
             },
+            // A submit-carrying field advertises Done so the IME's action key
+            // reads as "act on this", mirroring the iOS submitLabel.
+            imeAction = if (onSubmit.isNotEmpty()) ImeAction.Done else ImeAction.Default,
+        ),
+        // The IME action dispatches onSubmit as a plain void event — the same
+        // channel as a Button tap.
+        keyboardActions = KeyboardActions(
+            onDone = { if (onSubmit.isNotEmpty()) runtime.click(onSubmit) },
         ),
         decorationBox = { inner ->
             Box {
