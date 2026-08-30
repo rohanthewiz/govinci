@@ -142,7 +142,7 @@ func styleAttr(s *core.Style) string {
 		styles = append(styles, fmt.Sprintf("background:%s", s.Background))
 	}
 	if s.FontSize != 0 {
-		styles = append(styles, fmt.Sprintf("font-size:%dpx", s.FontSize))
+		styles = append(styles, fmt.Sprintf("font-size:%gpx", s.FontSize))
 	}
 	if s.Align != "" {
 		switch s.Align {
@@ -164,7 +164,7 @@ func styleAttr(s *core.Style) string {
 		styles = append(styles, fmt.Sprintf("margin:%dpx %dpx %dpx %dpx", s.Margin.Top, s.Margin.Right, s.Margin.Bottom, s.Margin.Left))
 	}
 	if s.BorderRadius != 0 {
-		styles = append(styles, fmt.Sprintf("border-radius:%dpx", s.BorderRadius))
+		styles = append(styles, fmt.Sprintf("border-radius:%gpx", s.BorderRadius))
 	}
 	if len(styles) == 0 {
 		return ""

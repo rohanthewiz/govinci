@@ -1,7 +1,5 @@
 package core
 
-import "fmt"
-
 type TabViewNode struct {
 	SelectedIndex int
 	OnTabChange   func(int)
@@ -81,28 +79,4 @@ func Content(views ...View) TabViewProp {
 
 func Tab(label string, icon string) TabItem {
 	return TabItem{Label: label, Icon: icon}
-}
-
-var (
-	intCallbacks = map[string]func(int){}
-	intCounter   int
-)
-
-func registerIntCallback(fn func(int)) string {
-	callbackMux.Lock()
-	defer callbackMux.Unlock()
-
-	id := fmt.Sprintf("int_cb_%d", intCounter)
-	intCounter++
-	intCallbacks[id] = fn
-	return id
-}
-
-func TriggerIntCallback(id string, val int) {
-	callbackMux.Lock()
-	defer callbackMux.Unlock()
-
-	if fn, ok := intCallbacks[id]; ok {
-		fn(val)
-	}
 }

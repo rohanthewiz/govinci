@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -158,5 +159,53 @@ func TestIntervalTickPushesWithoutAnyNativeEvent(t *testing.T) {
 
 	awaitPush(t, l, 2*time.Second, func(p string) bool {
 		return strings.Contains(p, "update-props") && strings.Contains(p, "count:")
+	})
+}
+
+func TestConcurrentStateWritesDoNotRace(t *testing.T) {
+	// Regression guard for the slot-access data race: State.Set from app
+	// goroutines used to write ctx.slots unsynchronized while the pump's
+	// render pass read them. The assertion here is the -race detector itself;
+	// the final awaitPush just proves the pipeline survived the storm and the
+	// last write still reached the listener.
+	var (
+		once sync.Once
+		st   core.State[int]
+	)
+	app := func(ctx *core.Context) core.View {
+		s := core.NewState(ctx, 0)
+		// Capture the accessor exactly once: the closure pair is re-created
+		// each render on the render goroutine, and re-assigning the captured
+		// variable there would itself race with the writer goroutines below.
+		once.Do(func() { st = s })
+		return core.Column(
+			core.Text(fmt.Sprintf("n: %d", s.Get())),
+		)
+	}
+
+	m := render.New(core.NewContext(), app)
+	defer m.Close()
+	m.RenderInitial()
+
+	l := newChanListener()
+	m.SetListener(l)
+
+	const writers, writes = 4, 50
+	var wg sync.WaitGroup
+	for w := range writers {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := range writes {
+				st.Set(w*1000 + i)
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	// Whichever writer landed last, its value must eventually be pushed.
+	final := st.Get()
+	awaitPush(t, l, 2*time.Second, func(p string) bool {
+		return strings.Contains(p, fmt.Sprintf("n: %d", final))
 	})
 }

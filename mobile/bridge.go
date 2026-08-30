@@ -86,6 +86,12 @@ func TriggerBoolCallback(id string, value bool) string {
 	return mgr.RenderAgain()
 }
 
+// TriggerIntCallback dispatches an int-carrying event (e.g. tab selection).
+func TriggerIntCallback(id string, value int) string {
+	core.TriggerIntCallback(id, value)
+	return mgr.RenderAgain()
+}
+
 // listenerAdapter bridges the locally declared interface onto the render
 // package's without exposing that package to the bind tool.
 type listenerAdapter struct{ l PatchListener }

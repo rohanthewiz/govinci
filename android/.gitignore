@@ -1,0 +1,10 @@
+# Gradle build state and outputs
+.gradle/
+app/build/
+build/
+
+# gomobile-produced binaries (rebuild with ./build.sh)
+app/libs/
+
+# Local SDK location
+local.properties

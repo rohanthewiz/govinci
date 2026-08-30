@@ -92,3 +92,31 @@ func TestPurgeDropsCallbacksNotReRegistered(t *testing.T) {
 		t.Errorf("purged callback still executed")
 	}
 }
+
+func TestIntCallbackIDsStableAndPurged(t *testing.T) {
+	// Int callbacks (TabView's onTabChange) originally lived in a separate
+	// registry with a never-resetting counter, so their IDs churned every
+	// render and stale entries accumulated forever. This locks in their
+	// membership in the render-pass system alongside the other three kinds.
+	BeginRenderPass()
+	first := registerIntCallback(func(int) {})
+
+	BeginRenderPass()
+	got := 0
+	if id := registerIntCallback(func(v int) { got = v }); id != first {
+		t.Errorf("int callback ID changed across passes: %q then %q", first, id)
+	}
+
+	TriggerIntCallback(first, 3)
+	if got != 3 {
+		t.Errorf("TriggerIntCallback delivered %d, want 3", got)
+	}
+
+	// A pass that does not re-register the callback must purge it.
+	BeginRenderPass()
+	PurgeUnusedCallbacks()
+	TriggerIntCallback(first, 9) // must be a silent no-op
+	if got != 3 {
+		t.Errorf("purged int callback still executed (got %d)", got)
+	}
+}

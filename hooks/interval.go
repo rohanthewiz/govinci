@@ -16,7 +16,14 @@ var intervalStore = struct {
 
 func UseInterval(ctx *core.Context, fn func(), interval time.Duration) {
 	index := ctx.Cursor
-	ctx.Cursor++ // take a slot
+	// Reserve this hook's cursor position through NewState rather than a bare
+	// Cursor++: NewState keeps the slot array and the cursor aligned. A bare
+	// increment leaves no slot behind, so every NewState after this hook in
+	// the same render appends its backing slot one index short of its cursor —
+	// from then on all later hooks read each other's slots (e.g. a bool
+	// Checkbox state landing where a string Input state is read, which
+	// panics on the type assertion).
+	core.NewState(ctx, struct{}{})
 
 	key := fmt.Sprintf("interval-%d", index)
 
@@ -63,7 +70,8 @@ var timeoutStore = struct {
 
 func UseTimeout(ctx *core.Context, fn func(), delay time.Duration) {
 	index := ctx.Cursor
-	ctx.Cursor++
+	// Same slot-reservation rationale as UseInterval above.
+	core.NewState(ctx, struct{}{})
 
 	key := fmt.Sprintf("timeout-%d", index)
 

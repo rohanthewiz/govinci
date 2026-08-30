@@ -1,21 +1,20 @@
 package com.govinci.app
 
 import android.os.Bundle
-import android.widget.FrameLayout
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import com.govinci.runtime.GovinciRoot
+import com.govinci.runtime.GovinciRuntime
 
-class MainActivity : AppCompatActivity() {
-    private lateinit var root: FrameLayout
-    private lateinit var renderer: PatchRenderer
-
+class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        root = FrameLayout(this)
-        setContentView(root)
-        renderer = PatchRenderer(this)
-
-        GovinciBridge.InitApp()
-        val initial = GovinciBridge.RenderInitial()
-        renderer.renderInitial(initial, root)
+        // The runtime mounts the initial Go-rendered tree and opens the push
+        // channel; after that the composition tracks the TreeStore on its own.
+        // Recreation (rotation, process restore) simply remounts from Go's
+        // current state — the Go side is a process-wide singleton.
+        val runtime = GovinciRuntime(GomobileBridge())
+        runtime.start()
+        setContent { GovinciRoot(runtime) }
     }
 }

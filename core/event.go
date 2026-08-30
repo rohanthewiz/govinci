@@ -11,10 +11,12 @@ var (
 	callbacks     = map[string]func(){}
 	textCallbacks = map[string]func(string){}
 	boolCallbacks = map[string]func(bool){}
+	intCallbacks  = map[string]func(int){}
 	callbackMux   sync.Mutex
 	counter       int
 	textCounter   int
 	boolCounter   int
+	intCounter    int
 
 	usedCallbacks = map[string]bool{}
 )
@@ -50,6 +52,7 @@ func BeginRenderPass() {
 	counter = 0
 	textCounter = 0
 	boolCounter = 0
+	intCounter = 0
 	// Fresh liveness marks for this pass: only callbacks re-registered below
 	// survive the post-render PurgeUnusedCallbacks.
 	usedCallbacks = make(map[string]bool)
@@ -118,6 +121,27 @@ func TriggerBoolCallback(id string, val bool) {
 	}
 }
 
+func registerIntCallback(fn func(int)) string {
+	callbackMux.Lock()
+	defer callbackMux.Unlock()
+
+	id := fmt.Sprintf("int_cb_%d", intCounter)
+	intCounter++
+	intCallbacks[id] = fn
+	usedCallbacks[id] = true
+	return id
+}
+
+func TriggerIntCallback(id string, val int) {
+	callbackMux.Lock()
+	defer callbackMux.Unlock()
+
+	if fn, ok := intCallbacks[id]; ok {
+		fn(val)
+		usedCallbacks[id] = true
+	}
+}
+
 func ReceiveEventPayload(payload map[string]any) {
 	id, ok := payload["callback"].(string)
 	if !ok {
@@ -160,6 +184,7 @@ func PurgeUnusedCallbacks() {
 	newCallbacks := make(map[string]func())
 	newTextCallbacks := make(map[string]func(string))
 	newBoolCallbacks := make(map[string]func(bool))
+	newIntCallbacks := make(map[string]func(int))
 
 	for id, fn := range callbacks {
 		if usedCallbacks[id] {
@@ -176,9 +201,15 @@ func PurgeUnusedCallbacks() {
 			newBoolCallbacks[id] = fn
 		}
 	}
+	for id, fn := range intCallbacks {
+		if usedCallbacks[id] {
+			newIntCallbacks[id] = fn
+		}
+	}
 
 	callbacks = newCallbacks
 	textCallbacks = newTextCallbacks
 	boolCallbacks = newBoolCallbacks
+	intCallbacks = newIntCallbacks
 	usedCallbacks = make(map[string]bool) // Clean up
 }
