@@ -153,8 +153,9 @@ func TestIntervalTickPushesWithoutAnyNativeEvent(t *testing.T) {
 		})
 	}
 
-	defer hooks.ClearIntervals() // the ticker store is global; stop it for later tests
-
+	// m.Close (deferred below) also stops the interval's ticker: hook
+	// resources belong to the context tree now, and closing the manager
+	// closes the tree — no global sweep needed for later tests.
 	m := render.New(core.NewContext(), tickerApp)
 	defer m.Close()
 
@@ -189,8 +190,6 @@ func TestConcurrentDispatchAndTimerPushesDoNotRace(t *testing.T) {
 			).Render(ctx)
 		})
 	}
-
-	defer hooks.ClearIntervals()
 
 	m := render.New(core.NewContext(), tickerCounterApp)
 	defer m.Close()
@@ -274,4 +273,46 @@ func TestConcurrentStateWritesDoNotRace(t *testing.T) {
 	awaitPush(t, l, 2*time.Second, func(p string) bool {
 		return strings.Contains(p, fmt.Sprintf("n: %d", final))
 	})
+}
+
+func TestManagerCloseStopsHookIntervals(t *testing.T) {
+	// The lifecycle-ownership contract: the Manager owns the app's lifetime,
+	// so closing it must also stop background resources hooks registered on
+	// the context tree — here an interval ticker. Without this, a replaced
+	// app (mobile.Register, WASM re-mount) would keep ticking and rendering
+	// into the void forever.
+	ticks := make(chan struct{}, 64)
+	tickerApp := func(ctx *core.Context) core.View {
+		return core.ComponentFunc(func(ctx *core.Context) *core.Node {
+			hooks.UseInterval(ctx, func() { ticks <- struct{}{} }, 10*time.Millisecond)
+			return core.Text("ticking").Render(ctx)
+		})
+	}
+
+	m := render.New(core.NewContext(), tickerApp)
+	m.RenderInitial()
+
+	select {
+	case <-ticks:
+	case <-time.After(2 * time.Second):
+		t.Fatal("interval never ticked before Close")
+	}
+
+	m.Close()
+
+	// A tick in flight at Close time may still land; drain until quiet, then
+	// require sustained silence (10x the tick period).
+	for {
+		select {
+		case <-ticks:
+			continue
+		case <-time.After(50 * time.Millisecond):
+		}
+		break
+	}
+	select {
+	case <-ticks:
+		t.Fatal("interval kept ticking after Manager.Close")
+	case <-time.After(100 * time.Millisecond):
+	}
 }

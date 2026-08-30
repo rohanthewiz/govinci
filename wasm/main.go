@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"github.com/GraHms/govinci/core"
 	. "github.com/GraHms/govinci/examples/social"
-	"github.com/GraHms/govinci/hooks"
 	"github.com/GraHms/govinci/render"
 	"syscall/js"
 )
@@ -18,6 +17,14 @@ var (
 var manager *render.Manager
 
 func renderInitial(this js.Value, args []js.Value) any {
+	// Re-initialization (the page calling RenderInitial again): close the
+	// previous manager first, which stops its pump and the hook resources
+	// (interval tickers, timeouts) registered on the shared ctx. This
+	// replaces the old global hooks.ClearIntervals() sweep — cleanup is
+	// per-context-tree now, reached through the manager that owns it.
+	if manager != nil {
+		manager.Close()
+	}
 	manager = render.New(ctx, App) // `App` é tua função de root view
 	// Push channel: if the host page defines GovinciApplyPatches, async state
 	// changes (timers, goroutines) are pushed to it as patch JSON instead of
@@ -26,7 +33,6 @@ func renderInitial(this js.Value, args []js.Value) any {
 	if js.Global().Get("GovinciApplyPatches").Type() == js.TypeFunction {
 		manager.SetListener(jsPatchListener{})
 	}
-	hooks.ClearIntervals()
 	out := manager.RenderInitial()
 	return js.ValueOf(out)
 }

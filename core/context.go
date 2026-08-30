@@ -23,6 +23,7 @@ type Context struct {
 	renderManager *RenderManager
 	registry      *callbackRegistry
 	nav           *navigatorState
+	cleanup       *cleanupRegistry
 
 	children       []*Context
 	childrenCursor int
@@ -63,6 +64,7 @@ func NewContext() *Context {
 		renderManager: NewRenderManager(),
 		registry:      newCallbackRegistry(),
 		nav:           newNavigatorState(),
+		cleanup:       newCleanupRegistry(),
 		scopes:        make(map[string]*Context),
 	}
 }
@@ -75,6 +77,7 @@ func (ctx *Context) NewChildContext() *Context {
 		renderManager: ctx.renderManager,
 		registry:      ctx.registry,
 		nav:           ctx.nav,
+		cleanup:       ctx.cleanup,
 		parent:        ctx,
 		scopes:        make(map[string]*Context),
 	}
@@ -129,6 +132,7 @@ func (ctx *Context) WithConfig(cfg *AppConfig) *Context {
 		renderManager: ctx.renderManager,
 		registry:      ctx.registry,
 		nav:           ctx.nav,
+		cleanup:       ctx.cleanup,
 	}
 }
 
@@ -141,6 +145,7 @@ func (ctx *Context) WithTheme(theme *Theme) *Context {
 		renderManager: ctx.renderManager,
 		registry:      ctx.registry,
 		nav:           ctx.nav,
+		cleanup:       ctx.cleanup,
 	}
 }
 

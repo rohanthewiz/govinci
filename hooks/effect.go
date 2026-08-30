@@ -1,26 +1,49 @@
 package hooks
 
 import (
-	"github.com/GraHms/govinci/core"
 	"reflect"
+
+	"github.com/GraHms/govinci/core"
 )
 
-var previousDeps = map[int][]any{}
-var effectIndex = 0
-
-func UseEffect(ctx *core.Context, effect func(), deps ...any) {
-	index := effectIndex
-	effectIndex++
-
-	prev, exists := previousDeps[index]
-	shouldRun := !exists || !reflect.DeepEqual(prev, deps)
-
-	if shouldRun {
-		previousDeps[index] = deps
-		go effect() // roda em background, pode adaptar conforme necessário
-	}
+// effectRecord is the per-hook-slot memory of UseEffect: whether the effect
+// has ever run for this slot, and the deps it last ran with. It lives in the
+// context's own hook-slot array (seeded via core.NewState), which is what
+// makes the hook correct without any package-level storage:
+//
+//   - identity comes from the slot position, so the same UseEffect call site
+//     reads the same record on every render — the former global index only
+//     ever counted upward, so every render saw fresh indices and re-ran every
+//     effect regardless of deps;
+//   - two components (or two whole apps) at the same cursor position have
+//     different slots, hence different records — no cross-talk;
+//   - no per-pass reset step is needed, so nothing depends on hosts
+//     remembering to call it (the old ResetEffects had no callers).
+//
+// No mutex: the record is only touched during render passes, which the render
+// manager serializes; the spawned effect goroutine never sees the record.
+type effectRecord struct {
+	ran  bool
+	deps []any
 }
 
-func ResetEffects() {
-	effectIndex = 0
+// UseEffect runs effect when the hook first mounts and again whenever deps
+// change between renders (compared with reflect.DeepEqual). With no deps it
+// runs exactly once for the lifetime of the slot.
+//
+// The effect runs on its own goroutine so a slow effect cannot stall the
+// render pass; anything it changes via State.Set reaches the screen through
+// the normal RequestRender → push-channel path.
+func UseEffect(ctx *core.Context, effect func(), deps ...any) {
+	// The record is allocated every render but NewState only keeps the first;
+	// Get then returns the slot's live record on this and every later pass.
+	slot := core.NewState(ctx, &effectRecord{})
+	rec := slot.Get()
+
+	if rec.ran && reflect.DeepEqual(rec.deps, deps) {
+		return
+	}
+	rec.ran = true
+	rec.deps = deps
+	go effect()
 }

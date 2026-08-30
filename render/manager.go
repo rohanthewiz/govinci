@@ -81,10 +81,18 @@ func New(ctx *core.Context, rootView func(*core.Context) core.View) *Manager {
 	return m
 }
 
-// Close stops the push pump. The Manager is normally an app-lifetime
-// singleton, so this mainly matters for tests and hot-reload hosts.
+// Close stops the push pump and closes the app's context tree, which stops
+// the background resources hooks registered on it (interval tickers, pending
+// timeouts). The Manager is the app-lifetime owner, so its Close is the one
+// shutdown entry point: hosts that replace an app (mobile.Register, the WASM
+// runtime re-mounting) close the old Manager and thereby cannot leak tickers
+// rendering into a dead tree. Normally an app-lifetime singleton, so this
+// mainly matters for tests and hot-reload hosts.
 func (m *Manager) Close() {
-	m.stopOnce.Do(func() { close(m.stop) })
+	m.stopOnce.Do(func() {
+		close(m.stop)
+		m.context.Close()
+	})
 }
 
 // SetListener attaches (or replaces) the native push target. Any state change
