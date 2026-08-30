@@ -2,9 +2,10 @@
 # Build the Govinci AAR with gomobile.
 #
 # Binds the `mobile` bridge package (the Kotlin runtime's call surface) plus
-# the demo app package, whose init() registers the root view with the bridge.
-# To ship your own app instead, replace the mobileapp path with your app's
-# package — any Go package whose init calls mobile.Register works.
+# an app package, whose init() registers the root view with the bridge.
+# The app package is the first argument, defaulting to the demo app:
+#   android/build.sh ./examples/todoapp
+# Any Go package whose init calls mobile.Register works.
 set -e
 
 # gomobile/gobind live in GOPATH/bin, which isn't always on PATH.
@@ -24,6 +25,11 @@ fi
 
 cd "$(dirname "$0")/.."
 mkdir -p android/app/libs
+
+# Which app package to bind alongside the bridge. Defaults to the demo app;
+# pass another package path to ship a different app in the same shell.
+APP_PKG="${1:-./examples/mobileapp}"
+
 gomobile bind -target=android -androidapi 24 \
   -o android/app/libs/govinci.aar \
-  ./mobile ./examples/mobileapp
+  ./mobile "$APP_PKG"
