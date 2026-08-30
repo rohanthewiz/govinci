@@ -19,9 +19,26 @@ var manager *render.Manager
 
 func renderInitial(this js.Value, args []js.Value) any {
 	manager = render.New(ctx, App) // `App` é tua função de root view
+	// Push channel: if the host page defines GovinciApplyPatches, async state
+	// changes (timers, goroutines) are pushed to it as patch JSON instead of
+	// relying on the IsDirty polling loop. Pages without it keep polling —
+	// the manager never consumes a diff unless a listener is attached.
+	if js.Global().Get("GovinciApplyPatches").Type() == js.TypeFunction {
+		manager.SetListener(jsPatchListener{})
+	}
 	hooks.ClearIntervals()
 	out := manager.RenderInitial()
 	return js.ValueOf(out)
+}
+
+// jsPatchListener forwards pushed patches to the page's GovinciApplyPatches
+// handler. ApplyPatches runs on the pump goroutine, which on js/wasm is
+// scheduled cooperatively on the single JS thread, so calling into JS here is
+// safe without extra marshalling.
+type jsPatchListener struct{}
+
+func (jsPatchListener) ApplyPatches(patches string) {
+	js.Global().Call("GovinciApplyPatches", patches)
 }
 func RequestPermission(p Permission, onResult func(granted bool)) {
 	js.Global().Call("GovinciRequestPermission", string(p), js.FuncOf(func(this js.Value, args []js.Value) any {
@@ -76,7 +93,7 @@ func registerCallbacks() {
 }
 
 func main() {
-	c := make(chan struct{}, 0)
+	c := make(chan struct{})
 	registerCallbacks()
 	println("Govinci WASM ready.")
 	<-c

@@ -19,13 +19,49 @@ var (
 	usedCallbacks = map[string]bool{}
 )
 
+// BeginRenderPass resets the callback ID counters so IDs are assigned by
+// render-pass sequence: the Nth callback registered in a pass is always
+// "cb_N" (or "txt_cb_N"/"bool_cb_N" for its kind).
+//
+// This is what makes callback IDs stable across renders. Component trees are
+// rebuilt from scratch on every render, and with monotonically increasing
+// counters every button received a brand-new onClick ID each time — so the
+// reconciler saw every interactive node's props as changed on every render,
+// and renderers re-bound every listener. With per-pass sequence IDs, an
+// unchanged UI re-registers the same IDs in the same order and produces zero
+// prop diffs; registration simply overwrites the map entry with the latest
+// closure, which is required for correctness anyway (the new closure captures
+// the current state slots).
+//
+// The IDs have the same stability granularity as the reconciler's positional
+// TargetID paths: a structural change that shifts later siblings also shifts
+// their callback IDs, and the same nodes get update-props patches the
+// positional differ would emit regardless. An event dispatched against a
+// stale tree can therefore hit a re-used ID and run the wrong handler in the
+// brief window around a structural re-render; identity-keyed IDs (planned
+// with stable node identity) are the eventual fix.
+//
+// Must be called exactly once at the start of each render pass, before any
+// component builders run. Renderers do this via render.Manager, not directly.
+func BeginRenderPass() {
+	callbackMux.Lock()
+	defer callbackMux.Unlock()
+
+	counter = 0
+	textCounter = 0
+	boolCounter = 0
+	// Fresh liveness marks for this pass: only callbacks re-registered below
+	// survive the post-render PurgeUnusedCallbacks.
+	usedCallbacks = make(map[string]bool)
+}
+
 func registerCallback(fn func()) string {
 	callbackMux.Lock()
 	defer callbackMux.Unlock()
 
 	id := fmt.Sprintf("cb_%d", counter)
 	counter++
-	callbacks[id] = fn
+	callbacks[id] = fn // overwrites last pass's closure at this position, keeping the freshest captures
 	usedCallbacks[id] = true
 	return id
 }

@@ -1,28 +1,59 @@
 package reconcile
 
 import (
-	"fmt"
+	"reflect"
+	"strconv"
 
 	"github.com/GraHms/govinci/core"
 )
 
-// Patch represents a minimal change set between two Node trees
+// Patch represents a minimal change set between two Node trees.
+//
+// TargetID is a slash-delimited positional path from the root (e.g. "root/0/2").
+// Because paths are positional rather than identity-based, patch order matters:
+// renderers must apply patches in the exact order emitted. In particular,
+// sibling removals are emitted highest-index-first so that applying one removal
+// never shifts the index of a later removal target in the same batch.
 type Patch struct {
-	Type     string      // e.g., "replace", "update", "reorder"
-	TargetID string      // Node ID or unique path
-	Changes  interface{} // could be Props, Style, Children diff
+	Type     string // "add", "remove", "replace", "update-props", "update-style", "add-child", "remove-child"
+	TargetID string // positional node path, e.g. "root/1/0"
+	Changes  any    // *core.Node for add/replace/add-child, Props map or *Style for updates
 }
 
-// Diff compares two Node trees and returns a list of patches
+// Diff compares two Node trees and returns the list of patches that transforms
+// the old tree into the new one.
+//
+// The algorithm is a single top-down pass:
+//
+//	old == new == nil      -> nothing
+//	one side nil           -> add / remove
+//	type changed           -> replace whole subtree (cheaper and safer than
+//	                          trying to morph one widget kind into another)
+//	otherwise              -> shallow props/style updates, then recurse into
+//	                          children pairwise by index
+//
+// Children are matched by index, not identity. When both children at an index
+// carry keys and the keys differ, we emit a replace for that slot: positional
+// TargetIDs cannot express "this node moved from index 3 to index 1" safely,
+// because the first applied move would invalidate the paths of every patch
+// after it. True move patches require identity-based node IDs and are planned
+// alongside that change (see ai_docs/plans/govinci-mobile-feasibility-analysis.md).
+// Until then, a keyed mismatch rebuilds the slot — visually correct, though the
+// replaced subtree loses transient native state (focus, scroll offset).
 func Diff(old, new *core.Node, path string) []Patch {
-	if old == nil && new != nil {
+	// Both absent: nothing to do. This guard also protects the recursive calls
+	// below from dereferencing nil when a slot is empty on both sides.
+	if old == nil && new == nil {
+		return nil
+	}
+	if old == nil {
 		return []Patch{{
 			Type:     "add",
 			TargetID: path,
 			Changes:  new,
 		}}
 	}
-	if new == nil && old != nil {
+	if new == nil {
 		return []Patch{{
 			Type:     "remove",
 			TargetID: path,
@@ -36,7 +67,7 @@ func Diff(old, new *core.Node, path string) []Patch {
 		}}
 	}
 
-	patches := []Patch{}
+	var patches []Patch
 
 	if propsChanged(old.Props, new.Props) {
 		patches = append(patches, Patch{
@@ -53,30 +84,19 @@ func Diff(old, new *core.Node, path string) []Patch {
 		})
 	}
 
-	// Keyed child reconciliation
-	oldKeyed := make(map[string]*core.Node)
-	newKeyed := make(map[string]*core.Node)
-	for _, c := range old.Children {
-		if c.Key != "" {
-			oldKeyed[c.Key] = c
-		}
-	}
-	for _, c := range new.Children {
-		if c.Key != "" {
-			newKeyed[c.Key] = c
-		}
-	}
-
+	// Recurse into the children both trees have, pairwise by index.
 	minLen := min(len(old.Children), len(new.Children))
-	for i := 0; i < minLen; i++ {
-		childPath := path + "/" + itoa(i)
+	for i := range minLen {
+		childPath := path + "/" + strconv.Itoa(i)
 		oldChild := old.Children[i]
 		newChild := new.Children[i]
 
-		if oldChild.Key != "" && newChild.Key != "" && oldChild.Key != newChild.Key {
-			// They have keys but don't match. Check if they moved.
-			// For simplicity in this naive implementation, we emit a replace if keys don't match exactly by index.
-			// A true React reconciler would emit 'move' patches, but for this framework, a full replace solves the error state.
+		if oldChild != nil && newChild != nil &&
+			oldChild.Key != "" && newChild.Key != "" &&
+			oldChild.Key != newChild.Key {
+			// Keyed slot whose occupant changed: rebuild rather than diff.
+			// Diffing across different keys would leak state between logically
+			// distinct items (the classic un-keyed-list bug this guards against).
 			patches = append(patches, Patch{
 				Type:     "replace",
 				TargetID: childPath,
@@ -86,60 +106,62 @@ func Diff(old, new *core.Node, path string) []Patch {
 			patches = append(patches, Diff(oldChild, newChild, childPath)...)
 		}
 	}
-	if len(old.Children) < len(new.Children) {
-		if len(old.Children) < len(new.Children) {
-			for i := len(old.Children); i < len(new.Children); i++ {
-				patches = append(patches, Patch{
-					Type:     "add-child",
-					TargetID: path,
-					Changes:  new.Children[i],
-				})
-			}
-		}
 
+	// New tree has extra children: append them in order. add-child targets the
+	// parent, so these are index-shift safe by construction.
+	for i := minLen; i < len(new.Children); i++ {
+		patches = append(patches, Patch{
+			Type:     "add-child",
+			TargetID: path,
+			Changes:  new.Children[i],
+		})
 	}
-	if len(old.Children) > len(new.Children) {
-		for i := len(new.Children); i < len(old.Children); i++ {
-			childPath := path + "/" + itoa(i)
-			patches = append(patches, Patch{
-				Type:     "remove-child",
-				TargetID: childPath,
-			})
-		}
+
+	// Old tree has extra children: remove them highest-index-first. A renderer
+	// that resolves paths against its live tree would otherwise remove index N
+	// and then find index N+1 pointing at the wrong (shifted) sibling.
+	for i := len(old.Children) - 1; i >= minLen; i-- {
+		patches = append(patches, Patch{
+			Type:     "remove-child",
+			TargetID: path + "/" + strconv.Itoa(i),
+		})
 	}
 
 	return patches
 }
 
+// propsChanged reports whether two prop maps differ.
+//
+// reflect.DeepEqual is used per value instead of `!=` for two reasons:
+// props may hold uncomparable values (slices, maps, structs containing them),
+// and comparing those with == panics at runtime; and DeepEqual gives correct
+// content comparison for those same values. The explicit missing-key check
+// distinguishes "key absent in b" from "key present with a nil/zero value",
+// which the previous `b[k] != v` lookup conflated.
 func propsChanged(a, b map[string]any) bool {
 	if len(a) != len(b) {
 		return true
 	}
-	for k, v := range a {
-		if b[k] != v {
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok {
+			return true
+		}
+		if !reflect.DeepEqual(av, bv) {
 			return true
 		}
 	}
 	return false
 }
 
+// styleChanged reports whether two styles differ by value.
+//
+// DeepEqual follows pointers, so two distinct allocations with equal contents
+// compare equal. That property is load-bearing here: every render rebuilds the
+// tree and re-allocates every Style, so the previous pointer comparison
+// (`a != b`) flagged every styled node as changed on every render, turning the
+// "minimal" diff into a near-full tree broadcast. It also correctly handles
+// nested pointers inside Style (HoverStyle, FocusStyle, PseudoStates).
 func styleChanged(a, b *core.Style) bool {
-	if a == nil && b == nil {
-		return false
-	}
-	if a == nil || b == nil {
-		return true
-	}
-	return a != b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func itoa(i int) string {
-	return fmt.Sprintf("%d", i)
+	return !reflect.DeepEqual(a, b)
 }

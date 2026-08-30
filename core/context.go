@@ -147,7 +147,10 @@ func NewState[T any](ctx *Context, initial T) State[T] {
 		set: func(val T) {
 			//log.Printf("Updating slot %d with value: %#v", index, val)
 			ctx.slots[index] = val
-			ctx.renderManager.TriggerRender("default")
+			// RequestRender rather than a bare TriggerRender: it also marks
+			// the tree dirty, so polling runtimes (WASM IsDirty) and the push
+			// channel observe the same signal.
+			ctx.RequestRender()
 		},
 	}
 }

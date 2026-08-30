@@ -37,7 +37,10 @@ func useIntervalInternal(ctx *core.Context, key string, fn func(), interval time
 	go func() {
 		for range ticker.C {
 			fn()
-			ctx.MarkDirty()
+			// RequestRender (not just MarkDirty) so a timer tick reaches the
+			// screen through the push channel even when no native event is in
+			// flight to piggyback a re-render on.
+			ctx.RequestRender()
 		}
 	}()
 }
